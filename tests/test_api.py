@@ -164,3 +164,25 @@ def test_scan_accepts_a_sale_window(client, monkeypatch):
     r = client.post("/scan", json={"address": "1 A St, Raleigh, NC 27601",
                                    "sold_within_months": 6})
     assert r.status_code == 200
+
+
+def test_images_resolve_when_the_database_came_from_another_machine(client, tmp_path):
+    """Paths are absolute when written, so a database seeded on a laptop points
+    at /home/... inside a container. The filename still resolves."""
+    from PIL import Image
+    from curbside.config import settings
+    from curbside.store import Store
+
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 32), (10, 10, 10)).save(settings.output_dir / "999_after.jpg")
+    s = Store(settings.db_path)
+    lid, _ = s.add_lead("9 Ghost St, Indianapolis, IN 46201")
+    s.advance(lid, "composed",
+              before_path="/somewhere/else/999_after.jpg",
+              after_path="/somewhere/else/999_after.jpg",
+              postcard_path="/somewhere/else/999_after.jpg")
+    s.close()
+
+    r = client.get(f"/leads/{lid}/image/postcard")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"

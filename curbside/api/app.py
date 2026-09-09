@@ -4,7 +4,6 @@ The CLI and the API are two front-ends onto the same stage functions - no
 logic lives here that isn't also reachable from the terminal.
 """
 import io
-import json
 import os
 import pathlib
 from typing import Optional
@@ -34,29 +33,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-process job state for the async `run` endpoint. Ephemeral by design -
-# except for seeded demo scans, which are restored from disk on boot so a
-# container restart does not empty the demo.
+# Scan jobs live in memory for the life of the process. On App Runner there is
+# no persistent volume, so a container restart clears them along with the
+# generated images - the user simply scans again.
 _JOBS = {}
-_SEED_FILE = settings.db_path.parent / "seeded_scans.json"
-
-
-def _load_seeded_scans():
-    if not _SEED_FILE.exists():
-        return
-    try:
-        for job in json.loads(_SEED_FILE.read_text()):
-            _JOBS[job["id"]] = job
-    except (ValueError, OSError):
-        pass
-
-
-def _save_seeded_scans():
-    """Persist completed scans so they outlive the process."""
-    done = [j for j in _JOBS.values() if j.get("status") == "completed"]
-    _SEED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _SEED_FILE.write_text(json.dumps(done, indent=2))
-    return len(done)
 
 
 def _store():
@@ -77,6 +57,23 @@ def _return_address():
     return None
 
 
+def _resolve_asset(stored_path):
+    """Locate an image whose recorded path may be from another machine.
+
+    Paths are absolute when written, so a database seeded on a laptop points
+    at /home/... inside a container. Fall back to matching the filename under
+    the configured directories.
+    """
+    p = pathlib.Path(stored_path)
+    if p.exists():
+        return p
+    for base in (settings.images_dir, settings.output_dir):
+        candidate = base / p.name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _supports_sale_date():
     """Whether the active state's parcel layer carries a sale date."""
     from curbside.sources.block import SUPPORTS_SALE_DATE
@@ -92,9 +89,6 @@ def _compliance_for(address):
 
 
 # ---------------------------------------------------------------- health
-
-_load_seeded_scans()
-
 
 @app.get("/health", tags=["ops"])
 def health():
@@ -120,7 +114,6 @@ def config():
         },
         "supports_sale_date": _supports_sale_date(),
         "renderable": settings.imagery().renderable,
-        "demo_mode": settings.demo_mode,
         "budget_usd": settings.budget_usd,
         "daily_mail_cap": settings.daily_mail_cap,
         "mail_provider": settings.mail_provider,
@@ -176,8 +169,8 @@ def lead_image(lead_id: int, kind: str):
         row = s.get(lead_id)
         if not row or not row[column]:
             raise HTTPException(404, f"no {kind} image for lead {lead_id}")
-        p = pathlib.Path(row[column])
-        if not p.exists():
+        p = _resolve_asset(row[column])
+        if p is None:
             raise HTTPException(404, "image file missing on disk")
         return FileResponse(p, media_type="image/jpeg")
     finally:
@@ -336,8 +329,6 @@ def _run_pipeline(job_id, req: RunRequest):
 @app.post("/run", tags=["pipeline"])
 def start_run(req: RunRequest, background: BackgroundTasks):
     import uuid
-    if settings.demo_mode:
-        raise HTTPException(403, "Demo mode: batch runs are disabled.")
     job_id = uuid.uuid4().hex[:12]
     _JOBS[job_id] = {"id": job_id, "status": "running", "stage": "queued", "log": []}
     background.add_task(_run_pipeline, job_id, req)
@@ -466,7 +457,6 @@ def _run_scan(job_id, req: ScanRequest):
             step("Rendering driveways", "done", "no candidates")
 
         job.update(status="completed", stage="done")
-        _save_seeded_scans()
     except Exception as e:
         if steps:
             steps[-1]["state"] = "error"
@@ -482,10 +472,6 @@ def _run_scan(job_id, req: ScanRequest):
 def start_scan(req: ScanRequest, background: BackgroundTasks):
     """Block scan: one address in, postcards out."""
     import uuid
-    if settings.demo_mode:
-        raise HTTPException(
-            403, "Demo mode: live scanning is disabled on this deployment. "
-                 "Browse the pre-generated scans instead.")
     job_id = uuid.uuid4().hex[:12]
     _JOBS[job_id] = {"id": job_id, "status": "running", "stage": "scanning",
                      "steps": [], "address": req.address, "lead_ids": []}
@@ -495,10 +481,10 @@ def start_scan(req: ScanRequest, background: BackgroundTasks):
 
 @app.get("/scans", tags=["pipeline"])
 def list_scans():
-    """Completed scans, newest first.
+    """Completed scans from this process, newest first.
 
-    In demo mode this is the entry point: live scanning is disabled, so the
-    UI offers the pre-generated blocks instead of an address box.
+    Lets the UI offer recent scans without re-running them. Cleared on
+    restart, since the images they reference are cleared too.
     """
     out = []
     for job in _JOBS.values():
