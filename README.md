@@ -5,7 +5,7 @@
 Takes a US street address, pulls a public-domain aerial photograph of that
 property, decides whether the driveway needs replacing, renders a new one onto
 the homeowner's own photo, and produces a print-ready, legally compliant
-postcard — with a human approving every piece before anything is mailed.
+postcard - with a human approving every piece before anything is mailed.
 
 ```
 $0.82 per mailed postcard · 91% of that is print and postage
@@ -47,7 +47,7 @@ flowchart TB
         CLI["CLI<br/>curbside run / review / mail"]
     end
 
-    subgraph api["API — FastAPI"]
+    subgraph api["API - FastAPI"]
         REST["/leads · /stats · /run · /mail"]
     end
 
@@ -152,7 +152,7 @@ by instruction**. Proven by test: when the model rewrites the house, the house
 still survives.
 
 **Two-axis QC.** Boundary QC measures drift outside the mask. Semantic QC asks
-a vision model what the masked region actually *is* — a roof or road can pass a
+a vision model what the masked region actually *is* - a roof or road can pass a
 drift check while being completely wrong.
 
 ---
@@ -164,12 +164,12 @@ print and advertising explicitly.
 
 | Provider | Blocking term |
 |---|---|
-| Google Street View / Maps | *"may not be used for any print purposes … Advertisements or promotional materials of any kind"* — no exceptions granted |
+| Google Street View / Maps | *"may not be used for any print purposes … Advertisements or promotional materials of any kind"* - no exceptions granted |
 | Vexcel | "Commercial Purpose" includes *"advertising, marketing materials"*; "Derivatives" exclude *"the images or pixels themselves"* |
 | Nearmap · EagleView | Internal use only, no redistribution |
 | Mapbox | *"shall not use Licensed Map Content in print"* |
 | Bing | Permits print ads, but *"no alteration except to resize"* |
-| MLS listing photos | Photographer holds copyright — **$750–$150,000 statutory exposure per photo** |
+| MLS listing photos | Photographer holds copyright - **$750–$150,000 statutory exposure per photo** |
 
 Several US states publish orthoimagery under **CC0-1.0**, the only license that
 cleanly permits commercial derivative works in print.
@@ -214,16 +214,16 @@ flowchart LR
     style B4 fill:#b7791f,stroke:#b7791f,color:#fff
 ```
 
-- **Disclosure is mandatory** — composition raises rather than produce a piece
+- **Disclosure is mandatory** - composition raises rather than produce a piece
   without one. Weak wording is rejected, not accepted.
 - **Return address and opt-out** are printed on every piece.
 - **Review-required states are gated** until explicitly acknowledged.
-- **Suppression is checked twice** — at discover and again at send.
+- **Suppression is checked twice** - at discover and again at send.
 - **Live mail requires four independent opt-ins**: a `live_*` key,
   `CURBSIDE_ALLOW_LIVE_MAIL=1`, a complete return address, and full suppression
   coverage (DMAchoice, USPS Deceased DNC, NCOALink).
 
-See **[docs/COMPLIANCE.md](docs/COMPLIANCE.md)**. *Not legal advice* — it
+See **[docs/COMPLIANCE.md](docs/COMPLIANCE.md)**. *Not legal advice* - it
 encodes conservative defaults so the open questions are reviewed, not missed.
 
 ---
@@ -275,7 +275,7 @@ flowchart LR
 
 See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the AWS walkthrough. SQLite on EFS
 is fine to the low thousands of leads; past that, move to RDS Postgres and S3
-for imagery — the store is the only module that changes.
+for imagery - the store is the only module that changes.
 
 ---
 
@@ -332,7 +332,7 @@ costs under a tenth of a cent per house and each correct rejection saves ~$0.75.
   segmentation model would be stronger.
 - **Property sourcing is not built.** Production needs recently-sold records:
   county recorder + assessor (free) or ListSource (~$0.31/record). The
-  assessor's owner field lags the recorder's deed by weeks — reading only the
+  assessor's owner field lags the recorder's deed by weeks - reading only the
   assessor roll mails the *previous* owner.
 
 ---
