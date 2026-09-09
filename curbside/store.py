@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS leads (
     mask_path       TEXT,
     postcard_path   TEXT,
     qualification   TEXT,
+    sale_date       TEXT,
+    sale_price      REAL,
+    lead_source     TEXT,
     qc              TEXT,
     fail_stage      TEXT,
     fail_error      TEXT,
@@ -145,6 +148,15 @@ class Store:
 
     def total_spend(self):
         r = self.db.execute("SELECT COALESCE(SUM(usd),0) AS t FROM costs").fetchone()
+        return r["t"]
+
+    def api_spend(self):
+        """Money actually charged by a paid API. Excludes modelled costs such
+        as print and postage, which are recorded for reporting but not billed
+        here - the budget cap guards real spend only."""
+        r = self.db.execute(
+            "SELECT COALESCE(SUM(usd),0) AS t FROM costs "
+            "WHERE model IS NOT NULL AND model NOT IN ('dryrun')").fetchone()
         return r["t"]
 
     def spend_by_stage(self):

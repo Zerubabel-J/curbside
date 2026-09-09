@@ -27,6 +27,12 @@ def _env(name, default, cast=str):
 # commercial derivative use in print — see docs/LICENSING.md.
 # --------------------------------------------------------------------------
 
+# Below roughly 6 in/px a driveway edge is not resolvable: renders drift and QC
+# rejects nearly everything. Sources coarser than this are kept for reference
+# but excluded from rendering.
+RENDERABLE_MAX_IN = 6.0
+
+
 @dataclass(frozen=True)
 class ImagerySource:
     key: str
@@ -36,6 +42,10 @@ class ImagerySource:
     attribution: str
     resolution_in: float
     states: tuple
+
+    @property
+    def renderable(self):
+        return self.resolution_in <= RENDERABLE_MAX_IN
 
 
 SOURCES = {
@@ -66,7 +76,11 @@ SOURCES = {
                  "Orthoimagery_Latest/ImageServer/exportImage"),
         license="public-domain-unrestricted",
         attribution="Imagery: NC OneMap, NC Center for Geographic Information",
-        resolution_in=6.0,
+        # Measured live at 0.5 m/px, not the 6in the county documents suggest.
+        # Too coarse for reliable driveway rendering - renders routinely fail
+        # QC on drift because the model cannot resolve the driveway edge.
+        # Kept for reference; not recommended for production rendering.
+        resolution_in=19.7,
         states=("NC",),
     ),
 }
@@ -92,9 +106,26 @@ class Settings:
     # --- QC thresholds ---
     mask_threshold: int = _env("CURBSIDE_MASK_THRESHOLD", 26, int)
     qc_drift_threshold: int = _env("CURBSIDE_QC_DRIFT", 18, int)
-    qc_max_outside_frac: float = _env("CURBSIDE_QC_MAX_OUTSIDE", 0.06, float)
+    # Drift is measured, reported, and then DISCARDED by compositing - the
+    # postcard uses the original photo outside the mask regardless. So this
+    # is a warning signal, not damage, and can run loose.
+    qc_max_outside_frac: float = _env("CURBSIDE_QC_MAX_OUTSIDE", 0.30, float)
     qc_min_mask_frac: float = _env("CURBSIDE_QC_MIN_MASK", 0.008, float)
-    qc_max_mask_frac: float = _env("CURBSIDE_QC_MAX_MASK", 0.45, float)
+    # On a narrow urban lot the driveway genuinely is a large share of the
+    # frame. Above ~70% the model has repainted the scene, not the driveway.
+    qc_max_mask_frac: float = _env("CURBSIDE_QC_MAX_MASK", 0.70, float)
+
+    # --- concurrency ---
+    # Per-lead work is network-bound (segment, render, QC), so a handful of
+    # workers turns a serial batch into a near-parallel one. Keep modest to
+    # stay well inside the model's rate limits.
+    workers: int = _env("CURBSIDE_WORKERS", 4, int)
+
+    # --- render retries ---
+    # A single render is one roll of the dice; the bold prompt reads best but
+    # drifts most. Retrying with tighter prompts recovers most failures for
+    # the cost of one extra render on the leads that need it.
+    render_attempts: int = _env("CURBSIDE_RENDER_ATTEMPTS", 2, int)
 
     # --- retries ---
     max_attempts: int = _env("CURBSIDE_MAX_ATTEMPTS", 3, int)
@@ -107,6 +138,12 @@ class Settings:
     addresses_file: pathlib.Path = field(default_factory=lambda: DATA / "addresses.txt")
     suppression_file: pathlib.Path = field(default_factory=lambda: DATA / "suppression.txt")
 
+    # --- demo ---
+    # A public URL with a "Scan block" button spends real API credit on every
+    # click. Demo mode serves the seeded results read-only and refuses paid
+    # work, so a shared link cannot run up a bill.
+    demo_mode: bool = _env("CURBSIDE_DEMO_MODE", False, bool)
+
     # --- mail ---
     mail_provider: str = _env("CURBSIDE_MAIL_PROVIDER", "dryrun")
 
@@ -114,6 +151,10 @@ class Settings:
         if self.source not in SOURCES:
             raise ValueError(f"unknown source {self.source!r}; have {list(SOURCES)}")
         return SOURCES[self.source]
+
+    @property
+    def renderable_sources(self):
+        return {k: v for k, v in SOURCES.items() if v.renderable}
 
     def ensure_dirs(self):
         for d in (VAR, self.images_dir, self.output_dir, self.outbox_dir):

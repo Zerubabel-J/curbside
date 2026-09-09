@@ -23,3 +23,5 @@ exclude = ["var*", "data*", "tests*", "docs*", "web*", "deploy*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["network: hits a live external endpoint"]
+addopts = "-m 'not network'"
