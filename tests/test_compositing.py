@@ -108,3 +108,68 @@ def test_consensus_intersects_prior_with_diff(scene):
     assert meta["mode"] == "consensus"
     assert mask[100, 190] > 0.5, "driveway kept"
     assert mask[90, 90] < 0.2, "house edit excluded by the prior"
+
+
+# --------------------------------------------- semantic QC: the street trap
+
+def _fake_verify(monkeypatch, payload):
+    """verify_region calls the model then applies structural overrides. Stub
+    the model so we test the override logic, not the model."""
+    from curbside.vision import gemini
+    monkeypatch.setattr(gemini, "ask_json",
+                        lambda *a, **k: (dict(payload), None, 0.0))
+    from curbside.render.compositing import verify_region
+    return verify_region("b.jpg", "m.jpg", "key")
+
+
+BASE = {"highlighted_object": "driveway", "spans_full_width": False,
+        "touches_house": True, "cars_on_it": 0, "is_driveway": True,
+        "confidence": "high", "note": "looks like a driveway"}
+
+
+def test_genuine_driveway_passes(monkeypatch):
+    r, err, _ = _fake_verify(monkeypatch, BASE)
+    assert err is None and r["is_driveway"] is True
+
+
+def test_one_parked_car_is_normal_for_a_driveway(monkeypatch):
+    r, _, _ = _fake_verify(monkeypatch, {**BASE, "cars_on_it": 1})
+    assert r["is_driveway"] is True
+
+
+def test_multiple_cars_means_it_masked_the_street(monkeypatch):
+    """The model will happily call a street a driveway, but it counts cars
+    accurately - and a residential driveway does not hold two parked cars in
+    a row along its length."""
+    r, _, _ = _fake_verify(monkeypatch, {**BASE, "cars_on_it": 2})
+    assert r["is_driveway"] is False
+    assert r["highlighted_object"] == "road"
+    assert "2 vehicles" in r["note"]
+
+
+def test_full_width_band_not_touching_house_is_the_street(monkeypatch):
+    r, _, _ = _fake_verify(monkeypatch, {**BASE, "spans_full_width": True,
+                                         "touches_house": False})
+    assert r["is_driveway"] is False
+    assert "spans the frame" in r["note"]
+
+
+def test_full_width_but_touching_house_is_still_a_driveway(monkeypatch):
+    """A wide apron in front of a garage legitimately spans much of the frame."""
+    r, _, _ = _fake_verify(monkeypatch, {**BASE, "spans_full_width": True,
+                                         "touches_house": True})
+    assert r["is_driveway"] is True
+
+
+def test_a_negative_verdict_is_never_overridden_upward(monkeypatch):
+    r, _, _ = _fake_verify(monkeypatch, {**BASE, "is_driveway": False,
+                                         "highlighted_object": "roof"})
+    assert r["is_driveway"] is False and r["highlighted_object"] == "roof"
+
+
+def test_model_error_passes_through(monkeypatch):
+    from curbside.vision import gemini
+    monkeypatch.setattr(gemini, "ask_json", lambda *a, **k: (None, "boom", 0.0))
+    from curbside.render.compositing import verify_region
+    r, err, _ = verify_region("b.jpg", "m.jpg", "key")
+    assert err == "boom" and r is None

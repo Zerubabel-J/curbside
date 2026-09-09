@@ -154,28 +154,67 @@ def verify_region(before_path, mask_preview_path, key, model=None):
 
     Boundary QC proves the edit stayed inside the mask. It cannot tell whether
     the mask was on the right object - a roof, a road or a neighbour's lot can
-    all pass a drift check. This asks a vision model to name what was covered.
+    all pass a drift check.
+
+    The failure this catches most often is the public street: it is paved,
+    sits right beside the driveway, and is frequently the largest paved area
+    in frame, so the model reaches for it. The prompt asks for the specific
+    tells rather than just "is this a driveway".
     """
     from curbside.vision import gemini
     SCHEMA = {
         "type": "object",
         "properties": {
             "highlighted_object": {"type": "string",
-                "enum": ["driveway","roof","road","sidewalk","lawn",
-                         "parking_lot","building","other"]},
+                "enum": ["driveway", "road", "roof", "sidewalk", "lawn",
+                         "parking_lot", "building", "other"]},
+            "spans_full_width": {"type": "boolean",
+                "description": "does the red region run edge to edge across the frame"},
+            "touches_house": {"type": "boolean",
+                "description": "does it connect to the house or garage"},
+            "cars_on_it": {"type": "integer",
+                "description": "how many vehicles sit on the red region"},
             "is_driveway": {"type": "boolean"},
-            "confidence": {"type": "string", "enum": ["high","medium","low"]},
+            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
             "note": {"type": "string"},
         },
-        "required": ["highlighted_object","is_driveway","confidence","note"],
+        "required": ["highlighted_object", "spans_full_width", "touches_house",
+                     "cars_on_it", "is_driveway", "confidence", "note"],
     }
-    PROMPT = ("A red translucent overlay marks one region of this aerial "
-              "photograph of a residential property. Identify what real-world "
-              "surface lies under the red overlay. Answer strictly: is it the "
-              "DRIVEWAY - the paved strip connecting the street to the house "
-              "or garage? A roof, road, sidewalk, lawn or parking lot is NOT a "
-              "driveway.")
-    return gemini.ask_json(mask_preview_path, PROMPT, SCHEMA, key, model=model)
+    PROMPT = (
+        "A red translucent overlay marks one region of this top-down aerial "
+        "photograph of a residential property. Identify what real-world "
+        "surface lies underneath it.\n\n"
+        "A DRIVEWAY is a private paved strip that CONNECTS THE HOUSE OR GARAGE "
+        "to the street. It is short, sits on the property, and usually widens "
+        "near the garage.\n\n"
+        "A ROAD is the public street. Tells: it runs edge to edge across the "
+        "frame, it is roughly parallel to the front of the house, it does NOT "
+        "touch the house, and cars are often parked along it. If the red "
+        "region looks like this, answer 'road', not 'driveway'.\n\n"
+        "Answer the structural questions honestly first, then decide."
+    )
+    result, err, cost = gemini.ask_json(mask_preview_path, PROMPT, SCHEMA,
+                                        key, model=model)
+    if err or not result:
+        return result, err, cost
+
+    # Override an optimistic 'driveway' using structural answers. Asked to
+    # confirm a label the model agrees; asked to count cars it reports
+    # accurately - and a residential driveway does not hold three vehicles.
+    if result.get("is_driveway"):
+        cars = result.get("cars_on_it") or 0
+        reasons = []
+        if cars >= 2:
+            reasons.append(f"{cars} vehicles on it")
+        if result.get("spans_full_width") and not result.get("touches_house"):
+            reasons.append("spans the frame without touching the house")
+        if reasons:
+            result["is_driveway"] = False
+            result["highlighted_object"] = "road"
+            result["note"] = ("looks like the public street: "
+                              + ", ".join(reasons))
+    return result, err, cost
 
 
 def save_mask_preview(before_path, mask, out_path):
