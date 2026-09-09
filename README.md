@@ -13,6 +13,23 @@ $0.82 per mailed postcard · 91% of that is print and postage
 
 ---
 
+## Two ways in
+
+**Scan a block** — the product. Type one address, get postcards for every
+neighbour worth mailing.
+
+```
+✓ Finding address coordinates      1240 Fairfield Ave, Indianapolis, IN
+✓ Scanning neighbouring properties 6 homes found
+✓ Fetching aerial imagery          6 imaged
+✓ Analysing 6 driveways            2 candidates, 4 skipped
+✓ Rendering 2 driveways + QC       2 passed, 0 rejected
+✓ Laying out postcards             2 ready to send
+```
+
+**Pipeline** — the operations console. Batch runs, QC detail, spend by stage,
+and the approval queue.
+
 ## What it does
 
 ```mermaid
@@ -227,6 +244,44 @@ See **[docs/COMPLIANCE.md](docs/COMPLIANCE.md)**. *Not legal advice* - it
 encodes conservative defaults so the open questions are reviewed, not missed.
 
 ---
+
+## Finding recently-sold homes — free
+
+Property transfers are public record, so several jurisdictions publish them
+directly. Both adapters are keyless and free.
+
+| Source | Freshness | Sale price | Licence |
+|---|---|---|---|
+| **Wake County, NC** | ~9 days | yes | unstated (public records) |
+| **Connecticut** | ~11 months | yes | **Public Domain** |
+
+```bash
+$ curbside sales-sources
+
+# freshest - genuinely "sold in the last six months"
+$ curbside run --sales wake_nc --sold-within-months 6 \
+               --min-price 200000 --max-year-built 2005
+```
+
+Rows carry coordinates (Wake returns parcel polygons, CT returns points), so
+these leads **skip geocoding entirely** and its 1 req/sec limit.
+
+Two filters that matter:
+
+- `--sold-within-months` is measured from the **dataset's newest record**, not
+  from today. Portals publish on a lag, so a calendar window often returns
+  nothing.
+- `--max-year-built` excludes new construction. Recent sales skew heavily to
+  new builds whose driveways are already new — in Wake County, filtering to
+  homes built before 2000 cuts 7,650 candidates to 2,806 genuinely worth
+  mailing.
+
+**Intended use.** These are wired up for development and verification. Only
+Connecticut carries an explicit public-domain grant; the county portals
+publish openly but state no licence, which means *no restriction found*, not
+*commercial redistribution granted*. Each adapter reports `commercial_use` so
+the distinction stays visible. A commercial campaign should review the
+publisher's terms or move to a licensed source.
 
 ## Quick start
 
