@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Gemini calls: qualify (vision) and render (image edit)."""
-import base64, json, os, pathlib, urllib.error, urllib.request
+import base64, json, os, pathlib, time, urllib.error, urllib.request
 
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
 QUALIFY_MODEL = "gemini-3.5-flash-lite"
@@ -14,16 +14,21 @@ PRICES = {
 
 QUALIFY_PROMPT = """This is a top-down aerial photograph (3 inch/pixel) of a US
 residential property, centred on the home. You are qualifying it for a DRIVEWAY
-RESURFACING direct-mail campaign.
+UPGRADE direct-mail campaign - the offer is a premium paver driveway, so both
+worn driveways AND plain-but-sound ones are valid candidates.
 
 Identify the driveway: the paved strip running from the street to the house or
 garage. Ignore the public sidewalk and the road itself.
 
-REJECT if: no driveway is visible; the driveway is already new and in good
-condition; the property is not a single-family home; or the driveway is too
-obscured by trees, shadow or vehicles to assess.
+QUALIFY when a driveway is visible and could be upgraded to pavers - including
+plain concrete or asphalt in decent condition.
 
-Be strict. Every wrong PASS costs a wasted postcard."""
+REJECT only when: no driveway is visible at all; the property is clearly not a
+single-family home; or the driveway is so obscured by trees, shadow or vehicles
+that it cannot be located.
+
+Score condition 1-10 where 1 is pristine new and 10 is badly broken. A low
+score is fine - it still qualifies for an upgrade."""
 
 QUALIFY_SCHEMA = {
     "type": "object",
@@ -43,41 +48,98 @@ QUALIFY_SCHEMA = {
                  "condition_score","obstruction","qualified","reason"],
 }
 
-RENDER_PROMPT = """Photorealistic aerial edit of a residential property.
+RENDER_PROMPT = """You are performing a LOCAL EDIT on an aerial photograph.
+Almost all of this image must come back untouched.
 
-Replace the existing plain driveway with a premium PAVER driveway: interlocking
-rectangular concrete pavers laid in a running-bond pattern, warm sandy-grey with
-subtle tonal variation between individual pavers, bordered on every edge by a
-contrasting darker charcoal soldier course two pavers wide.
+EDIT EXACTLY ONE THING: the driveway - the paved strip running between the
+street and the house or garage. Replace its surface with terracotta and
+warm-red clay pavers in a herringbone pattern, edged by a charcoal soldier
+course two pavers wide. The red must read clearly against the grey pavement
+and green lawn around it.
 
-The paver pattern and the border must both be clearly visible and regular at
-this resolution - this is the visual centrepiece of a marketing image, so the
-upgrade must be obvious at a glance against the plain grey pavement around it.
+DO NOT TOUCH ANYTHING ELSE. The house, its roof, the lawn, trees, the public
+sidewalk, the street, neighbouring lots and any parked vehicle must be
+returned byte-for-byte as they arrived. Do not repaint, restyle, brighten or
+re-render them. Do not extend the paved area beyond the driveway's existing
+outline - not onto the lawn, not onto the sidewalk, not onto the street.
+
+Every shadow currently falling across the driveway stays, at its original
+position and opacity.
+
+Sanity check before answering: the driveway is a small part of this frame. If
+you have changed most of the image, you have made a mistake - go back and
+change only the driveway.
+
+Keep the same framing, scale and camera angle. Photographic grain throughout."""
+
+
+_CONSTRAINTS = """
 
 BOUNDARY DISCIPLINE - follow the existing driveway outline exactly. Do not
 extend onto the lawn, the public sidewalk, the street, or the neighbouring
 property. Where the old driveway ended, the new one ends.
 
 PRESERVE PIXEL-IDENTICAL: the house and roof, all lawn and trees, every shadow
-falling across the driveway at its original opacity and position, the public
-sidewalk, the street, neighbouring properties, and any vehicle parked on the
-driveway - the car stays exactly where and as it is.
+falling across the driveway at its original opacity, the public sidewalk, the
+street, neighbouring properties, and any vehicle parked on the driveway.
 
-Keep the same framing, scale and camera angle. Photographic grain throughout -
-this must look like a photograph of a real paver driveway, not a flat graphic."""
+Keep the same framing, scale and camera angle. Photographic grain throughout."""
+
+# Tried in order. Attempt 1 is the strongest marketing image; later attempts
+# trade visual punch for boundary discipline so a home is not lost entirely.
+RENDER_LADDER = [
+    ("bold", RENDER_PROMPT),
+    ("tight", """You are performing a LOCAL EDIT on an aerial photograph. Almost
+all of this image must come back untouched.
+
+Edit exactly one thing: the driveway - the SHORT private strip connecting the
+house or garage to the street. It is NOT the public road, which runs across
+the frame and has cars parked along it.
+
+Replace only that strip with terracotta clay pavers in a herringbone pattern,
+edged by a charcoal border.
+
+Sanity check before answering: the driveway is a small part of this frame. If
+you have changed most of the image, or anything that runs edge to edge, you
+have made a mistake.""" + _CONSTRAINTS),
+    ("conservative", """Make a small, careful edit to this aerial photograph.
+
+Resurface ONLY the existing driveway with clean warm-toned pavers. Keep the
+edit modest and tightly inside the driveway's current outline - it is better
+to change slightly too little than to spill onto the lawn, the sidewalk or
+the street.
+
+Everything else in the photograph must be returned exactly as it arrived."""
+     + _CONSTRAINTS),
+]
 
 
-def _post(payload, key, timeout=180):
-    req = urllib.request.Request(
-        ENDPOINT, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "x-goog-api-key": key})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}: {e.read().decode()[:300]}"
-    except Exception as e:
-        return None, str(e)
+def _post(payload, key, timeout=180, attempts=3):
+    """POST with a short retry.
+
+    Transient read timeouts and 5xx responses are common enough that failing a
+    whole lead on the first one wastes the render we already paid for.
+    """
+    body = json.dumps(payload).encode()
+    last = None
+    for attempt in range(attempts):
+        req = urllib.request.Request(
+            ENDPOINT, data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r), None
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode()[:300]
+            # 4xx is our fault - retrying will not help.
+            if e.code < 500 and e.code != 429:
+                return None, f"HTTP {e.code}: {detail}"
+            last = f"HTTP {e.code}: {detail}"
+        except Exception as e:
+            last = str(e)
+        if attempt < attempts - 1:
+            time.sleep(1.5 * (attempt + 1))
+    return None, last
 
 
 def _output(resp, kind="text"):
@@ -151,11 +213,11 @@ def qualify(img_path, key, model=QUALIFY_MODEL):
         return None, f"unparseable: {t[:200]}", cost
 
 
-def render(img_path, out_path, key, model=RENDER_MODEL):
+def render(img_path, out_path, key, model=RENDER_MODEL, prompt=None):
     b64 = base64.b64encode(pathlib.Path(img_path).read_bytes()).decode()
     resp, err = _post({
         "model": model,
-        "input": [{"type": "text", "text": RENDER_PROMPT},
+        "input": [{"type": "text", "text": prompt or RENDER_PROMPT},
                   {"type": "image", "mime_type": "image/jpeg", "data": b64}],
         "response_format": {"type": "image", "mime_type": "image/jpeg"},
     }, key)
