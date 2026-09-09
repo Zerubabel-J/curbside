@@ -55,7 +55,15 @@ def cmd_run(a, store):
 
     print(f"source: {settings.imagery().name} "
           f"({settings.imagery().license}, {settings.imagery().resolution_in}in)")
-    print("discover"); print("  ", pipeline.discover(store, _addresses(), supp))
+    print("discover")
+    if a.sales:
+        print("  ", pipeline.discover_sales(
+            store, a.sales, supp, months=a.sold_within_months,
+            limit=a.sales_limit, town=a.town,
+            min_price=a.min_price, max_price=a.max_price,
+            max_year_built=a.max_year_built))
+    else:
+        print("  ", pipeline.discover(store, _addresses(), supp))
     print("image");    pipeline.image(store, a.limit)
     print("qualify");  pipeline.qualify(store, key, budget, a.limit)
     if not a.no_render:
@@ -77,10 +85,19 @@ def cmd_status(a, store):
         if counts.get(s):
             print(f"  {s:<14} {counts[s]:>6}")
     print("-" * 56)
+    # Separate money actually charged from modelled (not-yet-incurred) cost,
+    # so a dry run is never mistaken for real spend.
+    charged = store.db.execute(
+        "SELECT COALESCE(SUM(usd),0) t FROM costs WHERE model LIKE 'gemini%'"
+    ).fetchone()["t"]
+    modelled = store.total_spend() - charged
     for stage, usd in spend.items():
-        print(f"  {stage:<14} ${usd:>10.4f}")
+        tag = "" if stage != "mail" else "   (modelled)"
+        print(f"  {stage:<14} ${usd:>10.4f}{tag}")
+    print(f"  {'CHARGED':<14} ${charged:>10.4f}   Gemini API")
+    if modelled:
+        print(f"  {'MODELLED':<14} ${modelled:>10.4f}   print+postage, not billed")
     total = store.total_spend()
-    print(f"  {'TOTAL':<14} ${total:>10.4f}")
     n = counts.get("composed", 0) + counts.get("approved", 0) + counts.get("mailed", 0)
     if n:
         print(f"  {'per piece':<14} ${total/n:>10.4f}")
@@ -140,9 +157,28 @@ def cmd_retry(a, store):
 def cmd_sources(a, store):
     for k, s in SOURCES.items():
         mark = "*" if k == settings.source else " "
+        note = "" if s.resolution_in <= 6 else "  (too coarse for rendering)"
         print(f" {mark} {k:<16} {s.resolution_in:>4.1f}in  {s.license:<28} "
-              f"{','.join(s.states)}")
+              f"{','.join(s.states)}{note}")
     print("\n  select with CURBSIDE_SOURCE=<key>")
+    print("  3in resolves a driveway edge; 20in does not.")
+
+
+def cmd_sales_sources(a, store):
+    from curbside.sources.sales import SOURCES
+    print("Recently-sold property records — public record, free, no API key:\n")
+    for key, cls in SOURCES.items():
+        src = cls()
+        try:
+            newest = src.latest_sale_date()
+        except Exception as e:
+            newest = f"unreachable ({type(e).__name__})"
+        print(f"  {key}")
+        print(f"    {src.name}")
+        print(f"    licence  {src.license}")
+        print(f"    states   {', '.join(src.states)}")
+        print(f"    newest   {newest}")
+    print("\n  use:  curbside run --sales connecticut --sold-within-months 12")
 
 
 def cmd_doctor(a, store):
@@ -177,11 +213,25 @@ def main(argv=None):
     r.add_argument("--no-render", action="store_true")
     r.add_argument("--no-segmentation", action="store_true",
                    help="skip the segmentation prior (diff-only masking)")
+    r.add_argument("--sales", default=None,
+                   help="seed leads from a public-record sales source "
+                        "(see: curbside sales-sources)")
+    r.add_argument("--sold-within-months", type=int, default=18,
+                   help="how recently sold, relative to the dataset's newest record")
+    r.add_argument("--sales-limit", type=int, default=50)
+    r.add_argument("--town", default=None, help="restrict to one town/city")
+    r.add_argument("--min-price", type=float, default=None)
+    r.add_argument("--max-price", type=float, default=None)
+    r.add_argument("--max-year-built", type=int, default=None,
+                   help="only homes built on or before this year - recent sales "
+                        "skew to new construction whose driveways are new")
 
     sub.add_parser("status", help="state and spend").set_defaults(fn=cmd_status)
     sub.add_parser("review", help="pending approval").set_defaults(fn=cmd_review)
     sub.add_parser("sources", help="imagery sources").set_defaults(fn=cmd_sources)
     sub.add_parser("doctor", help="configuration check").set_defaults(fn=cmd_doctor)
+    sub.add_parser("sales-sources",
+                   help="recently-sold data sources").set_defaults(fn=cmd_sales_sources)
 
     ap = sub.add_parser("approve"); ap.set_defaults(fn=cmd_approve)
     ap.add_argument("ids", nargs="*"); ap.add_argument("--all", action="store_true")

@@ -105,3 +105,62 @@ def test_mail_endpoint_blocks_unacknowledged_state(client, seeded):
     r = client.post("/mail", json={"provider": "dryrun"})
     assert r.status_code == 200
     assert r.json()["sent"] == 0 and r.json()["blocked"] == 1
+
+
+# ------------------------------------------------------------- block scan
+
+def test_scan_requires_an_address(client):
+    assert client.post("/scan", json={}).status_code == 422
+
+
+def test_scan_returns_a_job_id(client, monkeypatch):
+    """The scan endpoint hands back a job immediately; work happens in the
+    background so the UI can show progress rather than block."""
+    import curbside.api.app as app_mod
+    monkeypatch.setattr(app_mod, "_run_scan", lambda *a, **k: None)
+    r = client.post("/scan", json={"address": "1 A St, Indianapolis, IN 46201"})
+    assert r.status_code == 200
+    assert len(r.json()["job_id"]) == 12
+    assert r.json()["status"] == "running"
+
+
+def test_unknown_scan_job_is_404(client):
+    assert client.get("/scan/deadbeef1234").status_code == 404
+
+
+def test_send_one_rejects_lead_in_wrong_state(client, seeded):
+    """A rejected lead has no postcard, so it cannot be sent."""
+    client.post(f"/leads/{seeded['in']}/reject")
+    r = client.post(f"/leads/{seeded['in']}/send")
+    assert r.status_code == 409
+
+
+def test_send_one_approves_and_mails_in_a_single_call(client, seeded):
+    r = client.post(f"/leads/{seeded['in']}/send", json={"note": "from card"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "mailed"
+    assert body["sent"] == 1
+    assert body["live"] is False
+
+
+def test_send_one_blocks_unacknowledged_state(client, seeded):
+    """Per-card send honours the same compliance gate as bulk send."""
+    r = client.post(f"/leads/{seeded['ca']}/send")
+    assert r.status_code == 200
+    assert r.json()["sent"] == 0 and r.json()["blocked"] == 1
+
+
+def test_config_reports_capability_flags(client):
+    """The UI hides the sale-date control where the layer cannot support it."""
+    d = client.get("/config").json()
+    assert "supports_sale_date" in d
+    assert "renderable" in d
+
+
+def test_scan_accepts_a_sale_window(client, monkeypatch):
+    import curbside.api.app as app_mod
+    monkeypatch.setattr(app_mod, "_run_scan", lambda *a, **k: None)
+    r = client.post("/scan", json={"address": "1 A St, Raleigh, NC 27601",
+                                   "sold_within_months": 6})
+    assert r.status_code == 200
