@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
 import { Stat, Lead, LeadRow } from './components.jsx'
+import Scan from './Scan.jsx'
 
 const TABS = [
   { key: 'composed', label: 'Review' },
@@ -19,6 +20,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
+  const [view, setView] = useState('scan')
 
   const refresh = useCallback(async () => {
     try {
@@ -76,25 +78,38 @@ export default function App() {
     <>
       <header className="top">
         <div className="brand">Curb<span>side</span></div>
+        <nav className="nav">
+          <button className={view === 'scan' ? 'on' : ''}
+                  onClick={() => setView('scan')}>Scan a block</button>
+          <button className={view === 'ops' ? 'on' : ''}
+                  onClick={() => { setView('ops'); refresh() }}>
+            Pipeline{pending ? ` (${pending})` : ''}
+          </button>
+        </nav>
+        <div className="spacer" />
         {config && (
-          <span className="pill" title={config.source.name}>
-            {config.source.name} · {config.source.license}
+          <span className="pill" title={`${config.source.name} · ${config.source.license}`}>
+            {config.source.states?.join(', ')} · {config.source.resolution_in}in
           </span>
         )}
-        <div className="spacer" />
-        {config && !config.checks.gemini_key && <span className="pill">no API key</span>}
-        <span className="pill">${spend.toFixed(4)} / ${budget.toFixed(2)}</span>
-        <button onClick={startRun} disabled={busy || job?.status === 'running'}>
-          {job?.status === 'running' ? `Running… ${job.stage}` : 'Run pipeline'}
-        </button>
-        <button className="primary" onClick={sendMail}
-                disabled={busy || !(counts.approved > 0)}>
-          Send {counts.approved || 0}
-        </button>
+        <span className="pill">${spend.toFixed(2)} spent</span>
       </header>
 
+      {view === 'scan' && <Scan onDone={refresh} config={config} />}
+
+      {view === 'ops' && (
       <main className="wrap">
         {error && <div className="banner err" style={{ marginBottom: '1rem' }}>{error}</div>}
+
+        <div className="row" style={{ marginBottom: '1rem' }}>
+          <button onClick={startRun} disabled={busy || job?.status === 'running'}>
+            {job?.status === 'running' ? `Running… ${job.stage}` : 'Run batch from address list'}
+          </button>
+          <button className="primary" onClick={sendMail}
+                  disabled={busy || !(counts.approved > 0)}>
+            Send {counts.approved || 0} approved
+          </button>
+        </div>
 
         <div className="grid">
           <Stat k="Awaiting review" v={pending}
@@ -149,10 +164,13 @@ export default function App() {
           </div>
         )}
 
-        <div className="foot">
-          {stats?.source?.attribution}
-        </div>
+        <div className="foot">{stats?.source?.attribution}</div>
       </main>
+      )}
+
+      {view === 'scan' && stats?.source?.attribution && (
+        <div className="foot">{stats.source.attribution}</div>
+      )}
     </>
   )
 }

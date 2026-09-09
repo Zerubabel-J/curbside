@@ -25,6 +25,11 @@ export const api = {
     req(`/leads/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) }),
   run: (body) => req('/run', { method: 'POST', body: JSON.stringify(body || {}) }),
   runStatus: (jobId) => req(`/run/${jobId}`),
+  scan: (body) => req('/scan', { method: 'POST', body: JSON.stringify(body) }),
+  scanStatus: (jobId) => req(`/scan/${jobId}`),
+  scans: () => req('/scans'),
+  send: (id, note) =>
+    req(`/leads/${id}/send`, { method: 'POST', body: JSON.stringify({ note }) }),
   mail: (body) => req('/mail', { method: 'POST', body: JSON.stringify(body || {}) }),
   imageUrl: (id, kind) => `${BASE}/leads/${id}/image/${kind}`,
 }
