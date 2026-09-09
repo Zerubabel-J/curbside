@@ -1,0 +1,15 @@
+# Real Indiana residential addresses.
+# Geocoding: OSM Nominatim -> US Census fallback (both free, no key)
+# Imagery:   Indiana IGIO 3-inch orthophoto, CC0-1.0 (free, no key)
+3820 W 79th St, Indianapolis, IN 46268
+5410 N Illinois St, Indianapolis, IN 46208
+8102 Talliho Dr, Indianapolis, IN 46256
+4920 N Pennsylvania St, Indianapolis, IN 46205
+6820 Gray Rd, Indianapolis, IN 46256
+7420 Kilmer Ln, Indianapolis, IN 46256
+1240 Fairfield Ave, Indianapolis, IN 46205
+3401 N Meridian St, Indianapolis, IN 46208
+5802 Central Ave, Indianapolis, IN 46220
+1717 N Delaware St, Indianapolis, IN 46202
+6301 N Keystone Ave, Indianapolis, IN 46220
+4402 Guilford Ave, Indianapolis, IN 46205
