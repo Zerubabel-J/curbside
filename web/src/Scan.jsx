@@ -95,7 +95,6 @@ export default function Scan({ onDone, config }) {
   const [error, setError] = useState(null)
   const timer = useRef(null)
   const [elapsed, setElapsed] = useState(0)
-  const [saved, setSaved] = useState([])
   const stepStart = useRef(Date.now())
   const lastStepCount = useRef(0)
 
@@ -113,11 +112,6 @@ export default function Scan({ onDone, config }) {
   }, [onDone])
 
   useEffect(() => () => clearTimeout(timer.current), [])
-
-  // In demo mode live scanning is disabled, so offer the pre-generated blocks.
-  useEffect(() => {
-    if (config?.demo_mode) api.scans().then(setSaved).catch(() => {})
-  }, [config])
 
   // A long step should look like progress, not a stall - tick a counter while
   // one is running, resetting whenever the pipeline moves on.
@@ -175,31 +169,7 @@ export default function Scan({ onDone, config }) {
 
   return (
     <section className="scan">
-      {!job && config?.demo_mode && (
-        <div className="hero">
-          <h1>Find every driveway on the block.</h1>
-          <p>One address in, a ready-to-mail postcard for every neighbour whose
-             driveway is worth upgrading.</p>
-
-          <div className="chips" style={{ marginTop: '2rem' }}>
-            {saved.map(sc => (
-              <button key={sc.job_id} className="example"
-                      onClick={() => { setBusy(true); poll(sc.job_id) }}>
-                <span className="ex-addr">{(sc.address || '').split(',')[0]}</span>
-                <span className="ex-note">{sc.homes} homes scanned</span>
-              </button>
-            ))}
-          </div>
-          {saved.length === 0 && <p className="try">Loading scans…</p>}
-          <p className="scope">
-            Live scanning is disabled on this demo — each scan calls a paid
-            image model. These blocks were scanned in advance and show the real
-            pipeline output.
-          </p>
-        </div>
-      )}
-
-      {!job && !config?.demo_mode && (
+      {!job && (
         <div className="hero">
           <h1>Find every driveway on the block.</h1>
           <p>Enter a job site address. We'll find the neighbours, spot the worn

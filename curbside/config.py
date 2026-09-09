@@ -138,12 +138,6 @@ class Settings:
     addresses_file: pathlib.Path = field(default_factory=lambda: DATA / "addresses.txt")
     suppression_file: pathlib.Path = field(default_factory=lambda: DATA / "suppression.txt")
 
-    # --- demo ---
-    # A public URL with a "Scan block" button spends real API credit on every
-    # click. Demo mode serves the seeded results read-only and refuses paid
-    # work, so a shared link cannot run up a bill.
-    demo_mode: bool = _env("CURBSIDE_DEMO_MODE", False, bool)
-
     # --- mail ---
     mail_provider: str = _env("CURBSIDE_MAIL_PROVIDER", "dryrun")
 
