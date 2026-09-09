@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "curbside"
+version = "0.4.0"
+description = "AI-rendered direct mail for home-services contractors"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["pillow>=10.0", "numpy>=1.24"]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "pydantic>=2.0"]
+dev = ["pytest>=7.0", "httpx2"]
+
+[project.scripts]
+curbside = "curbside.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["curbside*"]
+exclude = ["var*", "data*", "tests*", "docs*", "web*", "deploy*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
