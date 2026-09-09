@@ -1,6 +1,8 @@
 """Pipeline stages. Each is independent, resumable and separately costed."""
+import concurrent.futures as _futures
 import json
 import pathlib
+import threading
 
 from curbside.config import settings
 from curbside.store import Store
@@ -15,6 +17,21 @@ from curbside.mail.providers import (get_provider, load_suppression,
                                      is_suppressed, MailError, UndeliverableError)
 
 
+def _scoped(store, state, limit, only=None):
+    """Leads in `state`, optionally restricted to a set of ids.
+
+    Batch runs want the whole queue. A block scan wants only the homes it just
+    found, so its progress counts describe that block and nothing else.
+    """
+    rows = store.ready_for(state, None if only else limit)
+    if only:
+        ids = set(only)
+        rows = [r for r in rows if r["id"] in ids]
+        if limit:
+            rows = rows[:limit]
+    return rows
+
+
 class BudgetExceeded(RuntimeError):
     pass
 
@@ -26,14 +43,14 @@ class Budget:
         self.store, self.cap = store, cap
 
     def check(self, projected=0.0):
-        spent = self.store.total_spend()
+        spent = self.store.api_spend()
         if spent + projected > self.cap:
             raise BudgetExceeded(
                 f"budget ${self.cap:.2f} would be exceeded "
                 f"(spent ${spent:.4f} + ${projected:.4f})")
 
     def remaining(self):
-        return self.cap - self.store.total_spend()
+        return self.cap - self.store.api_spend()
 
 
 # ---------------------------------------------------------------- stages
@@ -49,17 +66,57 @@ def discover(store, addresses, suppression):
     return {"added": added, "suppressed": suppressed}
 
 
-def image(store, limit=None, log=print):
+def discover_sales(store, source_key, suppression, months=18, limit=100,
+                   log=print, **filters):
+    """Seed leads from a public-record sales source.
+
+    Records arrive with coordinates, so these leads skip geocoding entirely -
+    faster, and it avoids the OSM rate limit.
+    """
+    from curbside.sources.sales import get_source
+
+    src = get_source(source_key)
+    sales = src.recent_sales(months=months, limit=limit, **filters)
+    log(f"  {src.name} — {len(sales)} sales, licence: {src.license}")
+
+    added = suppressed = 0
+    for sale in sales:
+        addr = sale.full_address()
+        if is_suppressed(addr, suppression):
+            suppressed += 1
+            continue
+        lead_id, created = store.add_lead(addr)
+        if created:
+            fields = {"sale_date": sale.sale_date,
+                      "sale_price": sale.sale_price,
+                      "lead_source": sale.source}
+            # Pre-geocoded: jump straight to 'imaged' readiness.
+            if sale.lat and sale.lon:
+                fields.update(lat=sale.lat, lon=sale.lon, precision="sales-record")
+            store.advance(lead_id, "discovered", note=f"sold {sale.sale_date}", **fields)
+            added += 1
+    return {"added": added, "suppressed": suppressed,
+            "source": src.key, "license": src.license}
+
+
+def image(store, limit=None, log=print, only=None):
     done = failed = 0
-    for lead in store.ready_for("discovered", limit):
-        lat, lon, prec, err = geocode(lead["address"])
+    for lead in _scoped(store, "discovered", limit, only):
+        # Sales records arrive pre-geocoded; only geocode when we must.
+        if lead["lat"] and lead["lon"]:
+            lat, lon, prec, err = lead["lat"], lead["lon"], lead["precision"], None
+        else:
+            lat, lon, prec, err = geocode(lead["address"])
         if lat is None:
             store.fail(lead["id"], "imagery", err)
             log(f"  [{lead['id']}] geocode failed: {err}")
             failed += 1
             continue
         path = settings.images_dir / f"{lead['id']:06d}_before.jpg"
-        ok, msg = fetch(lat, lon, path)
+        try:
+            ok, msg = fetch(lat, lon, path)
+        except Exception as e:
+            ok, msg = False, f"{type(e).__name__}: {e}"
         if not ok:
             store.fail(lead["id"], "imagery", msg)
             log(f"  [{lead['id']}] imagery failed: {msg}")
@@ -72,12 +129,32 @@ def image(store, limit=None, log=print):
     return {"imaged": done, "failed": failed}
 
 
-def qualify(store, key, budget, limit=None, log=print):
+def qualify(store, key, budget, limit=None, log=print, workers=None, only=None):
+    """Qualify leads, several at a time.
+
+    Each call is ~4s of waiting on the API, so concurrency here is close to a
+    linear speed-up. The store is written from the main thread only.
+    """
+    leads = list(_scoped(store, "imaged", limit, only))
+    if not leads:
+        return {"passed": 0, "rejected": 0, "failed": 0}
+
+    workers = workers or settings.workers
+    budget.check(0.001 * len(leads))
+
+    def call(lead):
+        return lead, gemini.qualify(lead["before_path"], key,
+                                    model=settings.qualify_model)
+
+    results = []
+    if workers > 1 and len(leads) > 1:
+        with _futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(call, leads))
+    else:
+        results = [call(l) for l in leads]
+
     passed = rejected = failed = 0
-    for lead in store.ready_for("imaged", limit):
-        budget.check(0.001)
-        q, err, cost = gemini.qualify(lead["before_path"], key,
-                                      model=settings.qualify_model)
+    for lead, (q, err, cost) in results:
         store.add_cost(lead["id"], "qualify", cost, settings.qualify_model)
         if err:
             store.fail(lead["id"], "qualify", err)
@@ -97,80 +174,144 @@ def qualify(store, key, budget, limit=None, log=print):
     return {"passed": passed, "rejected": rejected, "failed": failed}
 
 
-def render(store, key, budget, limit=None, log=print, use_segmentation=True):
-    """Render, mask by consensus, QC on boundary and semantics, composite."""
-    rendered = failed = 0
-    for lead in store.ready_for("qualified", limit):
-        budget.check(gemini.PRICES[settings.render_model]["per_image"])
+def render(store, key, budget, limit=None, log=print, use_segmentation=True,
+           workers=None, only=None):
+    """Render, mask by consensus, QC on boundary and semantics, composite.
 
-        # Segmentation prior — decided from the ORIGINAL, before any render,
-        # so a bad render cannot define its own mask.
-        prior, seg_meta = (segment(lead["before_path"], key=key)
-                           if use_segmentation else (None, {"strategy": "off"}))
-        if seg_meta.get("cost"):
-            store.add_cost(lead["id"], "segment", seg_meta["cost"],
-                           settings.qualify_model)
+    The three network calls per lead (segment, render, semantic QC) dominate
+    wall time, so leads are processed concurrently. Only the main thread
+    touches the store.
+    """
+    src = settings.imagery()
+    if not src.renderable:
+        alts = ", ".join(settings.renderable_sources)
+        raise RuntimeError(
+            f"{src.name} is {src.resolution_in:.0f} in/px - too coarse to "
+            f"resolve a driveway edge, so renders will not pass QC. "
+            f"Set CURBSIDE_SOURCE to one of: {alts}")
 
+    leads = list(_scoped(store, "qualified", limit, only))
+    if not leads:
+        return {"rendered": 0, "failed": 0}
+
+    workers = workers or settings.workers
+    budget.check(gemini.PRICES[settings.render_model]["per_image"] * len(leads))
+
+    def attempt(lead, prior, seg_meta, prompt, tag):
+        """One render + both QC passes. Returns (bundle, passed)."""
+        out = {"costs": []}
         raw = settings.output_dir / f"{lead['id']:06d}_raw.jpg"
         ok, msg, cost = gemini.render(lead["before_path"], raw, key,
-                                      model=settings.render_model)
-        store.add_cost(lead["id"], "render", cost, settings.render_model)
+                                      model=settings.render_model, prompt=prompt)
+        out["costs"].append(("render", cost, settings.render_model))
         if not ok:
-            store.fail(lead["id"], "render", msg)
-            log(f"  [{lead['id']}] render failed: {msg[:80]}")
-            failed += 1
-            continue
+            out["error"] = ("render", msg)
+            return out, False
 
-        mask, mask_meta = consensus_mask(
-            lead["before_path"], raw, prior,
-            threshold=settings.mask_threshold)
-
+        mask, mask_meta = consensus_mask(lead["before_path"], raw, prior,
+                                         threshold=settings.mask_threshold)
         report = qc(lead["before_path"], raw, mask,
                     drift_threshold=settings.qc_drift_threshold,
                     max_outside_frac=settings.qc_max_outside_frac)
         report["segmentation"] = seg_meta
         report["mask"] = mask_meta
+        report["attempt"] = tag
 
         preview = settings.output_dir / f"{lead['id']:06d}_mask.jpg"
         save_mask_preview(lead["before_path"], mask, preview)
+        out.update(raw=raw, mask=mask, report=report, preview=preview)
 
         if not report["passed"]:
-            store.advance(lead["id"], "failed", note="qc: " + "; ".join(report["reasons"]),
-                          fail_stage="render", fail_error=json.dumps(report["reasons"]),
-                          qc=report, mask_path=str(preview))
-            log(f"  [{lead['id']}] QC FAIL — {'; '.join(report['reasons'])}")
+            return out, False
+
+        sem, sem_err, sem_cost = verify_region(lead["before_path"], preview, key)
+        out["costs"].append(("qc", sem_cost, settings.qualify_model))
+        report["semantic"] = sem if not sem_err else {"error": sem_err}
+        out["semantic"] = (sem, sem_err)
+        if sem and not sem_err and not sem.get("is_driveway"):
+            return out, False
+        return out, True
+
+    def work(lead):
+        """Everything network-bound for one lead, with a retry ladder."""
+        base = {"lead": lead, "costs": []}
+        try:
+            prior, seg_meta = (segment(lead["before_path"], key=key)
+                               if use_segmentation else (None, {"strategy": "off"}))
+            base["seg_meta"] = seg_meta
+            if seg_meta.get("cost"):
+                base["costs"].append(("segment", seg_meta["cost"], settings.qualify_model))
+
+            last = None
+            for tag, prompt in gemini.RENDER_LADDER[:settings.render_attempts]:
+                out, passed = attempt(lead, prior, seg_meta, prompt, tag)
+                base["costs"].extend(out.pop("costs", []))
+                last = {**base, **out}
+                if passed:
+                    return last
+            return last or base
+        except Exception as e:
+            base["error"] = ("render", f"{type(e).__name__}: {e}")
+            return base
+
+    if workers > 1 and len(leads) > 1:
+        with _futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            bundles = list(pool.map(work, leads))
+    else:
+        bundles = [work(l) for l in leads]
+
+    rendered = failed = 0
+    for b in bundles:
+        lead = b["lead"]
+        for stage, usd, model in b["costs"]:
+            store.add_cost(lead["id"], stage, usd, model)
+
+        if b.get("error"):
+            stage, msg = b["error"]
+            store.fail(lead["id"], stage, msg)
+            log(f"  [{lead['id']}] render failed: {str(msg)[:80]}")
             failed += 1
             continue
 
-        # Semantic QC: boundary discipline proves the edit stayed in the mask,
-        # not that the mask was on a driveway.
-        sem, sem_err, sem_cost = verify_region(lead["before_path"], preview, key)
-        store.add_cost(lead["id"], "qc", sem_cost, settings.qualify_model)
-        report["semantic"] = sem if not sem_err else {"error": sem_err}
+        report, preview = b["report"], b["preview"]
+
+        if not report["passed"]:
+            store.advance(lead["id"], "failed",
+                          note="qc: " + "; ".join(report["reasons"]),
+                          fail_stage="render",
+                          fail_error=json.dumps(report["reasons"]),
+                          qc=report, mask_path=str(preview))
+            log(f"  [{lead['id']}] QC FAIL - {'; '.join(report['reasons'])}")
+            failed += 1
+            continue
+
+        sem, sem_err = b.get("semantic", (None, None))
         if sem and not sem_err and not sem.get("is_driveway"):
             report["passed"] = False
             store.advance(lead["id"], "failed",
                           note=f"qc: edited {sem.get('highlighted_object')}, not driveway",
                           fail_stage="render", fail_error="wrong region",
                           qc=report, mask_path=str(preview))
-            log(f"  [{lead['id']}] QC FAIL — edited {sem.get('highlighted_object')}")
+            log(f"  [{lead['id']}] QC FAIL - edited {sem.get('highlighted_object')}")
             failed += 1
             continue
 
         final = settings.output_dir / f"{lead['id']:06d}_after.jpg"
-        composite(lead["before_path"], raw, mask, final)
+        composite(lead["before_path"], b["raw"], b["mask"], final)
         store.advance(lead["id"], "rendered", after_path=str(final),
                       mask_path=str(preview), qc=report)
         log(f"  [{lead['id']}] rendered  mask={report['mask_frac']:.1%} "
             f"drift={report['outside_drift_frac']:.2%} "
-            f"via={mask_meta.get('mode')} region={(sem or {}).get('highlighted_object','?')}")
+            f"via={report['mask'].get('mode')} "
+            f"region={(sem or {}).get('highlighted_object','?')}")
         rendered += 1
+
     return {"rendered": rendered, "failed": failed}
 
 
-def compose(store, return_address, limit=None, log=print):
+def compose(store, return_address, limit=None, log=print, only=None):
     composed = failed = 0
-    for lead in store.ready_for("rendered", limit):
+    for lead in _scoped(store, "rendered", limit, only):
         card = settings.output_dir / f"{lead['id']:06d}_postcard.jpg"
         focus = None
         if lead["mask_path"] and pathlib.Path(lead["mask_path"]).exists():
