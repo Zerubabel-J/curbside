@@ -55,3 +55,19 @@ def test_focus_returns_none_without_a_mask(tmp_path):
     p1, p2 = tmp_path / "b.jpg", tmp_path / "m.jpg"
     Image.fromarray(base).save(p1); Image.fromarray(base).save(p2)
     assert focus_from_mask(p2, p1) is None
+
+
+def test_attribution_follows_the_active_imagery_source(images, tmp_path, monkeypatch):
+    """Crediting the wrong agency is a licensing problem, not a typo."""
+    from curbside.config import settings
+    from PIL import Image as _I
+    b, a = images
+    monkeypatch.setattr(settings, "source", "connecticut")
+    out = tmp_path / "ct.jpg"
+    build(b, a, "1 A St, Hartford, CT 06103", out, return_address=RA)
+    assert out.exists()
+    # The default must not be baked in.
+    import inspect
+    from curbside.compose import postcard
+    sig = inspect.signature(postcard.build)
+    assert sig.parameters["attribution"].default is None

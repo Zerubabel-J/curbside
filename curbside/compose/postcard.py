@@ -77,8 +77,14 @@ def build(before_path, after_path, address, out_path, *,
           company="Heartland Driveway Co.",
           phone="(317) 555-0142",
           zoom=1.25, focus=None,
-          attribution="Imagery: Indiana Geographic Information Office (IGIO), CC0-1.0"):
+          attribution=None):
     from curbside.compliance.policy import assert_disclosure, REQUIRED_DISCLOSURE
+    from curbside.config import settings
+
+    # Attribution follows the imagery actually used - hardcoding it credits
+    # the wrong agency the moment the source changes.
+    if attribution is None:
+        attribution = settings.imagery().attribution
 
     # Compliance is enforced here, at the point of composition - a piece that
     # cannot carry its disclosure is never produced in the first place.
