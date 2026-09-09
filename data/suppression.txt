@@ -1,0 +1,2 @@
+# Do-not-mail list. One address per line, matched on normalized address key.
+# Production must also honour DMAchoice, USPS Deceased DNC, and NCOALink.
