@@ -28,7 +28,7 @@ VITE_API_BASE=https://<api-url> npm run build
 npx vercel deploy --prod dist
 ```
 
-Free, and gives John a single link.
+Free, and gives a single HTTPS link to share.
 
 ## Tear down
 

@@ -39,7 +39,7 @@ Reports what is configured and what would block a live send. Costs nothing.
 ### 1 · Tests — free, offline, no keys
 
 ```bash
-python3 -m pytest tests/ -q        # 65 tests, ~2 seconds
+python3 -m pytest tests/ -q        # 117 tests, ~2 seconds
 ```
 
 Run this first. If it passes, the machine is intact.

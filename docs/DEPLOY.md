@@ -1,102 +1,111 @@
 # Deploying to AWS
 
-Two artefacts: a Python API container and a static React bundle.
+Two artefacts: a Python API container and a static React bundle. The bundle
+goes to Vercel; the container goes to AWS.
 
 ```mermaid
 flowchart LR
-    U["User"] --> CF["CloudFront"]
-    CF -->|"/"| S3["S3 · React build"]
-    CF -->|"/api/*"| ALB["ALB"]
+    U["Browser"] -->|HTTPS| V["Vercel · React build"]
+    V -->|"/api/* proxied server-side"| ALB["ALB :80"]
     ALB --> ECS["ECS Fargate · FastAPI"]
-    ECS --> EFS[("EFS · images + SQLite")]
     ECS --> SM["Secrets Manager"]
-    ECS --> EXT["Gemini · Lob"]
+    ECS --> EXT["Gemini · State GIS"]
 ```
 
-## 1 · Build
+## The working path: ECS Fargate
+
+`deploy-apprunner.sh` exists and is simpler, but **App Runner is unavailable
+on a free-plan AWS account** — every region returns
+`SubscriptionRequiredException`. ECS Fargate uses primitives every account
+has, so that is the path that shipped.
 
 ```bash
-# API image
-docker build -t curbside-api .
+export AWS_PROFILE=<profile>
+export AWS_REGION=us-east-1
+export GEMINI_API_KEY=...
 
-# Front end
-cd web && npm ci && npm run build      # -> web/dist
+./deploy-ecs.sh
 ```
 
-## 2 · Push the image
+The script is idempotent. It builds the image for `linux/amd64` (Fargate is
+x86), pushes to ECR, stores the key in Secrets Manager, creates the execution
+role, ALB, target group, task definition and service, then waits for the
+target to report healthy and prints the DNS name.
+
+### Front end
 
 ```bash
-aws ecr create-repository --repository-name curbside-api
-aws ecr get-login-password --region us-east-1 \
-  | docker login --username AWS --password-stdin <acct>.dkr.ecr.us-east-1.amazonaws.com
-
-docker tag curbside-api:latest <acct>.dkr.ecr.us-east-1.amazonaws.com/curbside-api:latest
-docker push <acct>.dkr.ecr.us-east-1.amazonaws.com/curbside-api:latest
+cd web
+sed -i "s|REPLACE_WITH_ALB_DNS|<alb-dns>|" vercel.json
+npm run build && npx vercel deploy --prod
 ```
 
-## 3 · Secrets
+Deploy from the **CLI**, not the Vercel GitHub import. The import page detects
+the repo root as a FastAPI project and would deploy the backend; it also picks
+up backend environment variables that have no business in a browser bundle. If
+you do use the UI, set root directory to `web`, preset to Vite, and remove
+every detected environment variable.
 
-Never bake keys into the image. Store them and reference by ARN in the task
-definition.
+### Tear down
 
 ```bash
-aws secretsmanager create-secret --name curbside/gemini \
-  --secret-string '{"GEMINI_API_KEY":"..."}'
-aws secretsmanager create-secret --name curbside/lob \
-  --secret-string '{"LOB_API_KEY":"..."}'
+./destroy-ecs.sh
 ```
 
-## 4 · Persistent state
+Removes the service, ALB, target group, cluster, ECR repository, secret, log
+group, security group, and the IAM roles — including leftovers from an App
+Runner attempt.
 
-The API writes SQLite plus generated imagery to `var/`. On Fargate that must be
-an **EFS** volume mounted at `/app/var`, otherwise state vanishes on every task
-replacement.
+## Four things worth knowing
 
-```json
-"mountPoints": [{ "sourceVolume": "curbside-var", "containerPath": "/app/var" }]
-```
+**The ALB serves HTTP only.** Terminating TLS on it requires an ACM
+certificate, which requires a domain you control. Instead `web/vercel.json`
+rewrites `/api/*` to the ALB **server-side**: the browser only ever speaks
+HTTPS to Vercel, and the plaintext hop happens between Vercel and AWS. The
+frontend defaults to a relative `/api`, so no build-time API URL is needed and
+nothing breaks if the ALB DNS changes.
 
-## 5 · Environment
+**ECS creates its service-linked role lazily.** On a new account the first
+`create-service` call fails *while* creating `AWSServiceRoleForECS`. The role
+exists afterwards, so re-running the script succeeds. Do not go hunting for a
+permissions problem.
 
-| Variable | Purpose |
-|---|---|
-| `GEMINI_API_KEY` | from Secrets Manager |
-| `CURBSIDE_FROM_*` | return address — required to compose |
-| `CURBSIDE_SOURCE` | `indiana` · `connecticut` · `north_carolina` |
-| `CURBSIDE_BUDGET` | hard spend ceiling |
-| `CURBSIDE_DAILY_MAIL_CAP` | pieces per run |
-| `CURBSIDE_CORS_ORIGINS` | your CloudFront domain |
-| `LOB_API_KEY` | only when mailing for real |
-| `CURBSIDE_ALLOW_LIVE_MAIL` | `1` to permit a live send |
-| `CURBSIDE_ACK_STATES` | states cleared by counsel |
+**State is container-local.** There is no EFS volume: generated imagery and
+the SQLite database live in the container and a task restart clears them. For
+a short demo the user simply scans again. To persist, mount an EFS volume at
+`/app/var` or sync `var/` to S3 — `store.py` is the only module that would
+need to change for a real database.
 
-## 6 · Front end
+**Absolute paths do not survive a container.** Image paths are recorded
+absolute when written, so a database seeded on a laptop points at `/home/...`
+inside the container and every image 404s. `_resolve_asset` falls back to
+matching the filename under the configured directories. This was found by
+running the built image rather than trusting it.
 
-```bash
-aws s3 sync web/dist s3://curbside-web --delete
-aws cloudfront create-invalidation --distribution-id <id> --paths "/*"
-```
-
-Point the CloudFront `/api/*` behaviour at the ALB. The bundle calls `/api` by
-default; override with `VITE_API_BASE` at build time.
-
-## 7 · Health and cost
+## Health and cost
 
 - ALB target group health check: `GET /health`
-- Alarm on the ECS task and on **AWS Budgets** — the pipeline's own
-  `CURBSIDE_BUDGET` caps model spend, but not infrastructure spend.
-- `GET /config` reports what is configured and what would block a live send.
+- Container logs: `aws logs tail /ecs/curbside --follow`
+- `GET /config` reports what is configured and what would block a live send
+
+| | Two days |
+|---|---|
+| Fargate 1 vCPU / 2 GB | $2.37 |
+| ALB hourly + LCU | $1.46 |
+| ECR + Secrets Manager | $0.03 |
+| **Total** | **$3.86** |
+
+**$58.74/month** if left running. The ALB is the bulk of the fixed cost, which
+is why App Runner is cheaper where it is available.
 
 ## Scaling past the prototype
-
-SQLite on EFS is fine into the low thousands of leads. Past that:
 
 | Concern | Change |
 |---|---|
 | Concurrent writes | RDS Postgres — `store.py` is the only module affected |
-| Image storage | S3 instead of EFS; store keys, not paths |
-| Long renders | SQS + a worker service; the stages are already independent |
+| Image storage | S3 instead of container disk; store keys, not paths |
+| Long renders | SQS + a worker service; stages are already independent |
 | Multi-tenant | Add a tenant column and scope every query |
 
 The pipeline stages are pure functions over the store, so none of this touches
-the render, QC, or compliance logic.
+the render, QC or compliance logic.

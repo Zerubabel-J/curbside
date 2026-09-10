@@ -11,6 +11,9 @@ postcard - with a human approving every piece before anything is mailed.
 $0.82 per mailed postcard · 91% of that is print and postage
 ```
 
+**Live demo: <https://web-zeta-dusky-84.vercel.app/>** — type an Indiana
+address or click a verified block. A six-home scan takes about a minute.
+
 ---
 
 ## Two ways in
@@ -286,51 +289,123 @@ publisher's terms or move to a licensed source.
 ## Quick start
 
 ```bash
-# backend
 pip install -e ".[api,dev]"
+cd web && npm install && cd ..
 
-export GEMINI_API_KEY=...                       # billed Google Cloud project
-export CURBSIDE_FROM_NAME="Heartland Driveway Co."
-export CURBSIDE_FROM_LINE1="1400 N Meridian St"
-export CURBSIDE_FROM_CITY="Indianapolis"
-export CURBSIDE_FROM_STATE="IN"
-export CURBSIDE_FROM_ZIP="46202"
+# secrets live outside the repo
+echo 'GEMINI_API_KEY=AIza...' > ~/.gemini_env && chmod 600 ~/.gemini_env
+cp .env.example .env          # return address - required to compose a piece
 
-curbside doctor                 # what is configured, what would block a send
-curbside --budget 3.00 run      # discover → compose
-curbside review                 # pending approval, with QC detail
-curbside approve --all
-curbside mail                   # dry run by default
-
-# API + dashboard
-uvicorn curbside.api.app:app --reload    # http://localhost:8000/docs
-cd web && npm install && npm run dev     # http://localhost:5173
+set -a; source ~/.gemini_env; source .env; set +a
 ```
 
-Global CLI flags precede the subcommand: `--budget`, `--limit`, `--db`.
+### The product — block scan
+
+```bash
+./run-local.sh                # starts API :8000 and dashboard :5173
+```
+
+Open <http://localhost:5173>, type an Indiana address or click a verified
+example. About 50–70 seconds for a six-home block, roughly 20c of model calls.
+
+### The operations console — CLI
+
+```bash
+curbside doctor               # what is configured, what would block a send
+curbside --budget 3.00 run    # batch from data/addresses.txt
+curbside review               # pending approval, with QC detail
+curbside approve --all
+curbside mail                 # dry run by default, sends nothing
+```
+
+Global flags precede the subcommand: `--budget`, `--limit`, `--db`.
+
+### What costs money
+
+Free: geocoding, imagery, compositing, QC arithmetic, postcard composition,
+tests, dry-run mail. Only the model calls bill.
+
+| Action | Cost |
+|---|---|
+| Qualify one address | $0.0009 |
+| Segment + render + semantic QC | ~$0.07 |
+| **A qualified lead, end to end** | **~$0.07** |
+| A six-home block scan | ~$0.20 |
+
+`CURBSIDE_BUDGET` is a hard ceiling checked before every paid call. It guards
+API spend only — modelled print-and-postage never consumes it.
+
+See **[docs/RUNNING.md](docs/RUNNING.md)** for troubleshooting.
 
 ---
 
 ## Deployment
 
+Deployed live at **<https://web-zeta-dusky-84.vercel.app/>** — the React build
+sits on Vercel; the API runs as a container on ECS Fargate behind a load
+balancer.
+
 ```mermaid
 flowchart LR
-    U["👤 User"] --> CF["CloudFront"]
-    CF --> S3["S3<br/>React build"]
-    CF --> ALB["ALB /api/*"]
-    ALB --> ECS["ECS Fargate<br/>FastAPI"]
-    ECS --> EFS[("EFS<br/>images + db")]
-    ECS --> SM["Secrets Manager<br/>API keys"]
+    U["👤 Browser"] -->|HTTPS| V["Vercel<br/>React build"]
+    V -->|"/api/* proxied<br/>server-side"| ALB["ALB :80"]
+    ALB --> ECS["ECS Fargate<br/>FastAPI container"]
+    ECS --> SM["Secrets Manager<br/>GEMINI_API_KEY"]
+    ECS --> GIS["State GIS<br/>CC0 imagery"]
     ECS --> GEM["Gemini API"]
-    ECS --> LOB["Lob API"]
 
     style ECS fill:#cb3f14,stroke:#cb3f14,color:#fff
-    style S3 fill:#2f7d55,stroke:#2f7d55,color:#fff
+    style V fill:#2f7d55,stroke:#2f7d55,color:#fff
 ```
 
-See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the AWS walkthrough. SQLite on EFS
-is fine to the low thousands of leads; past that, move to RDS Postgres and S3
-for imagery - the store is the only module that changes.
+```bash
+export AWS_PROFILE=<profile>
+export AWS_REGION=us-east-1
+export GEMINI_API_KEY=...
+
+./deploy-ecs.sh          # builds, pushes to ECR, deploys, prints the ALB DNS
+
+cd web
+sed -i "s|REPLACE_WITH_ALB_DNS|<alb-dns>|" vercel.json
+npm run build && npx vercel deploy --prod
+
+./destroy-ecs.sh         # removes everything, stops billing
+```
+
+### Three things this deployment had to solve
+
+**App Runner was unavailable.** A free-plan AWS account returns
+`SubscriptionRequiredException` for App Runner in every region. ECS Fargate
+uses primitives every account has, so `deploy-ecs.sh` is the working path;
+`deploy-apprunner.sh` is kept for accounts where it is enabled.
+
+**The ALB serves HTTP only.** Terminating TLS on it needs an ACM certificate,
+which needs a domain. A browser on an HTTPS page refuses to call an HTTP API,
+so `web/vercel.json` proxies `/api` **server-side** — the browser stays on
+HTTPS and the plaintext hop happens between Vercel and AWS. The frontend
+defaults to a relative `/api`, so no build-time API URL is needed.
+
+**ECS creates its service-linked role lazily.** The first `create-service`
+call on a new account fails *while* creating `AWSServiceRoleForECS`. Re-running
+succeeds. The script is idempotent, so a retry is the fix.
+
+**State is container-local.** No EFS volume: a task restart clears generated
+scans and the user scans again. Acceptable for a short-lived demo; mount a
+volume or sync to S3 if results need to survive.
+
+### Cost
+
+| | Two days |
+|---|---|
+| Fargate 1 vCPU / 2 GB | $2.37 |
+| ALB hourly + LCU | $1.46 |
+| ECR + Secrets Manager | $0.03 |
+| **Total** | **$3.86** |
+
+Left running a month it is **$58.74** — tear it down.
+
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the full walkthrough and
+**[docs/DEMO.md](docs/DEMO.md)** for troubleshooting.
 
 ---
 
@@ -338,22 +413,33 @@ for imagery - the store is the only module that changes.
 
 ```
 curbside/
-  config.py             settings, imagery sources
+  config.py             settings, imagery sources, QC thresholds
   store.py              SQLite state machine, costs, events
-  pipeline.py           stages: discover → mail
+  pipeline.py           stages: discover → mail, concurrent, scopeable
   cli.py                command-line interface
-  api/                  FastAPI app + response schemas
-  sources/              geocoding, state GIS imagery
-  vision/gemini.py      qualify, render, structured vision
+  api/app.py            FastAPI: block scan, leads, stats, per-card send
+  sources/
+    geocode.py          OSM Nominatim → US Census fallback
+    imagery.py          state GIS orthoimagery, retries on 5xx
+    block.py            one address → every neighbour worth mailing
+    sales.py            recently-sold records from public data
+  vision/gemini.py      qualify, render ladder, structured vision
   render/
     segmentation.py     driveway priors, consensus masking
     compositing.py      masked merge, boundary + semantic QC
   compose/postcard.py   300 DPI composition, mask-centred framing
   mail/providers.py     dry-run and Lob adapters
   compliance/policy.py  disclosure, state gating, campaign preflight
-web/                    React dashboard (Vite)
-tests/                  65 tests, no network required
-docs/                   licensing, compliance, deployment
+
+web/                    React dashboard (Vite) + vercel.json proxy
+tests/                  117 tests, no network or API keys required
+docs/                   running, licensing, compliance, deployment
+
+Dockerfile              container image
+deploy-ecs.sh           deploy to ECS Fargate + ALB    ← the working path
+destroy-ecs.sh          tear it all down
+deploy-apprunner.sh     App Runner variant (needs a paid-plan account)
+run-local.sh            start API + dashboard together
 ```
 
 ---
@@ -385,15 +471,24 @@ costs under a tenth of a cent per house and each correct rejection saves ~$0.75.
 - **Segmentation is a bounding box, not a polygon.** Vision models trace boxes
   far more reliably; the render diff supplies the true boundary. A dedicated
   segmentation model would be stronger.
-- **Property sourcing is not built.** Production needs recently-sold records:
-  county recorder + assessor (free) or ListSource (~$0.31/record). The
-  assessor's owner field lags the recorder's deed by weeks - reading only the
-  assessor roll mails the *previous* owner.
+- **Render reliability.** Roughly one render in three fails QC. The retry
+  ladder recovers most, and the safety layer rejects the rest — so a scan
+  returns fewer cards than homes rather than wrong ones.
+- **Indiana and Connecticut only.** NC OneMap measures ~20 in/px, too coarse
+  to resolve a driveway edge, so rendering refuses on it by design.
+- **Sale-date targeting needs a layer that carries one.** Wake County NC does;
+  Indiana's parcel layer does not, so the filter is unavailable there rather
+  than silently returning everything.
 
 ---
 
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -q      # 65 tests, no network, no API keys
+python3 -m pytest tests/ -q          # 117 tests, no network, no API keys
+python3 -m pytest tests/ -q -m ""    # + 7 that hit live public endpoints
 ```
+
+Network tests are marked and deselected by default, so the suite runs offline.
+The load-bearing test asserts that when the model rewrites the house,
+compositing returns the original — the guarantee the render pipeline rests on.
