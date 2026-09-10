@@ -7,18 +7,14 @@ property, decides whether the driveway needs replacing, renders a new one onto
 the homeowner's own photo, and produces a print-ready, legally compliant
 postcard - with a human approving every piece before anything is mailed.
 
-```
-$0.82 per mailed postcard · 91% of that is print and postage
-```
-
-**Live demo: <https://web-zeta-dusky-84.vercel.app/>** — type an Indiana
+**Live demo: <https://web-zeta-dusky-84.vercel.app/>** - type an Indiana
 address or click a verified block. A six-home scan takes about a minute.
 
 ---
 
 ## Two ways in
 
-**Scan a block** — the product. Type one address, get postcards for every
+**Scan a block** - the product. Type one address, get postcards for every
 neighbour worth mailing.
 
 ```
@@ -30,7 +26,7 @@ neighbour worth mailing.
 ✓ Laying out postcards             2 ready to send
 ```
 
-**Pipeline** — the operations console. Batch runs, QC detail, spend by stage,
+**Pipeline** - the operations console. Batch runs, QC detail, spend by stage,
 and the approval queue.
 
 ## What it does
@@ -248,7 +244,7 @@ encodes conservative defaults so the open questions are reviewed, not missed.
 
 ---
 
-## Finding recently-sold homes — free
+## Finding recently-sold homes - free
 
 Property transfers are public record, so several jurisdictions publish them
 directly. Both adapters are keyless and free.
@@ -275,7 +271,7 @@ Two filters that matter:
   from today. Portals publish on a lag, so a calendar window often returns
   nothing.
 - `--max-year-built` excludes new construction. Recent sales skew heavily to
-  new builds whose driveways are already new — in Wake County, filtering to
+  new builds whose driveways are already new - in Wake County, filtering to
   homes built before 2000 cuts 7,650 candidates to 2,806 genuinely worth
   mailing.
 
@@ -299,7 +295,7 @@ cp .env.example .env          # return address - required to compose a piece
 set -a; source ~/.gemini_env; source .env; set +a
 ```
 
-### The product — block scan
+### The product - block scan
 
 ```bash
 ./run-local.sh                # starts API :8000 and dashboard :5173
@@ -308,7 +304,7 @@ set -a; source ~/.gemini_env; source .env; set +a
 Open <http://localhost:5173>, type an Indiana address or click a verified
 example. About 50–70 seconds for a six-home block, roughly 20c of model calls.
 
-### The operations console — CLI
+### The operations console - CLI
 
 ```bash
 curbside doctor               # what is configured, what would block a send
@@ -333,7 +329,7 @@ tests, dry-run mail. Only the model calls bill.
 | A six-home block scan | ~$0.20 |
 
 `CURBSIDE_BUDGET` is a hard ceiling checked before every paid call. It guards
-API spend only — modelled print-and-postage never consumes it.
+API spend only - modelled print-and-postage never consumes it.
 
 See **[docs/RUNNING.md](docs/RUNNING.md)** for troubleshooting.
 
@@ -341,7 +337,7 @@ See **[docs/RUNNING.md](docs/RUNNING.md)** for troubleshooting.
 
 ## Deployment
 
-Deployed live at **<https://web-zeta-dusky-84.vercel.app/>** — the React build
+Deployed live at **<https://web-zeta-dusky-84.vercel.app/>** - the React build
 sits on Vercel; the API runs as a container on ECS Fargate behind a load
 balancer.
 
@@ -381,7 +377,7 @@ uses primitives every account has, so `deploy-ecs.sh` is the working path;
 
 **The ALB serves HTTP only.** Terminating TLS on it needs an ACM certificate,
 which needs a domain. A browser on an HTTPS page refuses to call an HTTP API,
-so `web/vercel.json` proxies `/api` **server-side** — the browser stays on
+so `web/vercel.json` proxies `/api` **server-side** - the browser stays on
 HTTPS and the plaintext hop happens between Vercel and AWS. The frontend
 defaults to a relative `/api`, so no build-time API URL is needed.
 
@@ -402,7 +398,7 @@ volume or sync to S3 if results need to survive.
 | ECR + Secrets Manager | $0.03 |
 | **Total** | **$3.86** |
 
-Left running a month it is **$58.74** — tear it down.
+Left running a month it is **$58.74** - tear it down.
 
 See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the full walkthrough and
 **[docs/DEMO.md](docs/DEMO.md)** for troubleshooting.
@@ -444,44 +440,6 @@ run-local.sh            start API + dashboard together
 
 ---
 
-## Economics
-
-Measured, per 1,000 leads with the qualifier rejecting ~60%:
-
-| Stage | Cost | Share |
-|---|---|---|
-| Geocode + imagery | $0.00 | 0% |
-| Qualify (1,000) | $0.90 | 0.3% |
-| Segment + render + QC (400) | $27.44 | 8.4% |
-| Print + postage (400) | $300.00 | **91.3%** |
-| **Total** | **$328.34** | **$0.82 / piece** |
-
-Mail dominates. The qualifier is the highest-value component in the system: it
-costs under a tenth of a cent per house and each correct rejection saves ~$0.75.
-
----
-
-## Known limits
-
-- **Top-down, not front elevation.** Legally usable imagery is aerial. For
-  driveways this arguably reads better; it is not what a listing photo shows.
-- **Imagery is 3–4 years old** on state refresh cycles.
-- **Geocoding is approximate.** OSM gives rooftop precision for most addresses;
-  some fall back to street centreline.
-- **Segmentation is a bounding box, not a polygon.** Vision models trace boxes
-  far more reliably; the render diff supplies the true boundary. A dedicated
-  segmentation model would be stronger.
-- **Render reliability.** Roughly one render in three fails QC. The retry
-  ladder recovers most, and the safety layer rejects the rest — so a scan
-  returns fewer cards than homes rather than wrong ones.
-- **Indiana and Connecticut only.** NC OneMap measures ~20 in/px, too coarse
-  to resolve a driveway edge, so rendering refuses on it by design.
-- **Sale-date targeting needs a layer that carries one.** Wake County NC does;
-  Indiana's parcel layer does not, so the filter is unavailable there rather
-  than silently returning everything.
-
----
-
 ## Testing
 
 ```bash
@@ -491,4 +449,4 @@ python3 -m pytest tests/ -q -m ""    # + 7 that hit live public endpoints
 
 Network tests are marked and deselected by default, so the suite runs offline.
 The load-bearing test asserts that when the model rewrites the house,
-compositing returns the original — the guarantee the render pipeline rests on.
+compositing returns the original - the guarantee the render pipeline rests on.
