@@ -1,44 +1,99 @@
 # Curbside
 
-**AI-rendered direct mail for home-services contractors.**
+**Turns one street address into ready-to-mail postcards that show homeowners
+their own house with a new driveway on it.**
 
-Takes a US street address, pulls a public-domain aerial photograph of that
-property, decides whether the driveway needs replacing, renders a new one onto
-the homeowner's own photo, and produces a print-ready, legally compliant
-postcard - with a human approving every piece before anything is mailed.
-
-**Live demo: <https://web-zeta-dusky-84.vercel.app/>** - type an Indiana
-address or click a verified block. A six-home scan takes about a minute.
+**Live demo: <https://web-zeta-dusky-84.vercel.app/>** — type an Indiana
+address, or click one of the example blocks. A scan of six homes takes about
+a minute.
 
 ---
 
-## Two ways in
+## What this is, in plain terms
 
-**Scan a block** - the product. Type one address, get postcards for every
-neighbour worth mailing.
+Driveway contractors have a marketing problem: they do not know which houses
+need their service. Mailing a flyer to every home in a city is mostly wasted
+paper and postage.
+
+Curbside solves that. Give it one address — say, a job the contractor is
+already working on — and it:
+
+1. **Finds the neighbours.** Looks up every property on that block from public
+   government land records.
+2. **Gets a photo of each one.** A top-down aerial photograph, from imagery the
+   state publishes for free public use.
+3. **Judges each driveway.** An AI looks at the photo and decides whether that
+   driveway could be upgraded. Houses with no driveway, or that are not
+   single-family homes, are skipped.
+4. **Draws the new driveway.** A second AI edits the photo, replacing the old
+   driveway with new paving — *changing nothing else in the picture*.
+5. **Checks its own work.** Automated quality checks reject bad edits, so a
+   wrong result is thrown away rather than mailed.
+6. **Builds the postcard.** Before-and-after side by side, print quality, with
+   the legally required disclosures on it.
+7. **Waits for a person.** Nothing is mailed until a human approves it.
+
+The point is step 4. The recipient opens their post and sees **their own
+house** with a new driveway. That recognition is the entire product —
+everything else exists to deliver it safely and legally.
+
+> **Note on the AI edits.** The "after" image is a computer-generated
+> illustration, not a photo of real work. Every postcard says so in print.
+
+---
+
+## Words used in this README
+
+Skip this if the terms are familiar.
+
+| Term | What it means here |
+|---|---|
+| **Lead** | One property being considered for a postcard |
+| **Geocoding** | Turning a street address into map coordinates |
+| **Aerial / orthoimagery** | A photo taken straight down from a plane, corrected so distances are true — like a map you can see through |
+| **Parcel** | A property boundary in government land records |
+| **Public domain / CC0** | Content free for anyone to use, including commercially, with no permission needed |
+| **Render** | Having an AI redraw part of a photo |
+| **Mask** | The exact region of a photo we allow the AI to change — everything outside it is left untouched |
+| **QC (quality control)** | Automated checks that inspect the AI's output and reject bad results |
+| **Dry run** | The system does everything except actually post the mail; it writes a receipt instead |
+| **Suppression list** | Addresses that must never be mailed |
+| **API** | The part of the software other programs talk to, rather than people |
+| **CLI (command line)** | Running the tool by typing commands in a terminal |
+| **Container** | The application packaged with everything it needs, so it runs identically anywhere |
+| **DPI** | Dots per inch — print resolution. 300 DPI is standard for professional printing |
+
+---
+
+## Two ways to use it
+
+**Scan a block** — the product. Type one address, get postcards for every
+neighbour worth mailing. This is what the live demo shows.
 
 ```
 ✓ Finding address coordinates      1240 Fairfield Ave, Indianapolis, IN
 ✓ Scanning neighbouring properties 6 homes found
 ✓ Fetching aerial imagery          6 imaged
 ✓ Analysing 6 driveways            2 candidates, 4 skipped
-✓ Rendering 2 driveways + QC       2 passed, 0 rejected
+✓ Rendering 2 driveways + checks   2 passed, 0 rejected
 ✓ Laying out postcards             2 ready to send
 ```
 
-**Pipeline** - the operations console. Batch runs, QC detail, spend by stage,
-and the approval queue.
+**Pipeline** — the operations console, for whoever runs campaigns. Batch runs,
+quality-check detail, spend broken down by stage, and the approval queue.
 
-## What it does
+---
+
+## How the pieces fit together
 
 ```mermaid
 flowchart LR
-    A["📍 Address"] --> B["🛰️ Aerial photo<br/>public domain"]
-    B --> C{"🔍 Needs a<br/>driveway?"}
-    C -->|no| X["✕ Rejected<br/>$0.0009 saved a $0.75 mailing"]
-    C -->|yes| D["🎨 Render new<br/>paver driveway"]
-    D --> E["🛡️ Mask + QC<br/>only the driveway changes"]
-    E --> F["📬 Postcard<br/>300 DPI, compliant"]
+    A["📍 Address"] --> B["🛰️ Aerial photo<br/>free public imagery"]
+    B --> C{"🔍 Could this driveway<br/>be upgraded?"}
+    C -->|no| X["✕ Skipped<br/>a tenth of a cent<br/>saved a 75c mailing"]
+    C -->|yes| D["🎨 Draw new<br/>paver driveway"]
+    D --> E["🛡️ Quality checks<br/>only the driveway changed?"]
+    E --> F["📬 Postcard<br/>print quality, compliant"]
     F --> G{"👤 Human<br/>approves"}
     G -->|yes| H["✉️ Mailed"]
     G -->|no| X
@@ -48,23 +103,26 @@ flowchart LR
     style X fill:#6c757f,stroke:#6c757f,color:#fff
 ```
 
-The recipient opens their mail and sees **their own house** with a new
-driveway on it. That recognition is the entire product; everything else is
-plumbing built to deliver it safely and legally.
+**Why the skip step matters.** Judging a driveway costs about a tenth of a
+cent. Printing and posting a card costs about 75 cents. So every house
+correctly skipped pays for hundreds of judgements. It is the cheapest step and
+the most valuable one.
 
 ---
 
-## Architecture
+## How the software is put together
+
+The same engine sits behind both the web page and the terminal commands.
 
 ```mermaid
 flowchart TB
-    subgraph client["Front end"]
-        UI["React dashboard<br/>review · approve · spend"]
-        CLI["CLI<br/>curbside run / review / mail"]
+    subgraph client["What people use"]
+        UI["Web dashboard<br/>(React) — review, approve"]
+        CLI["Terminal commands<br/>curbside run / review / mail"]
     end
 
-    subgraph api["API - FastAPI"]
-        REST["/leads · /stats · /run · /mail"]
+    subgraph api["Web API<br/>(FastAPI, Python)"]
+        REST["/leads · /stats · /scan · /mail"]
     end
 
     subgraph core["Pipeline"]
@@ -74,14 +132,14 @@ flowchart TB
         S6 --> S7["compose"] --> S8["approve"] --> S9["mail"]
     end
 
-    subgraph ext["External"]
-        GIS["State GIS<br/>CC0 orthoimagery"]
-        GEO["OSM + US Census<br/>geocoding"]
-        GEM["Gemini<br/>vision + image edit"]
-        LOB["Lob<br/>print + mail"]
+    subgraph ext["Outside services"]
+        GIS["State government<br/>free aerial photos"]
+        GEO["OpenStreetMap + US Census<br/>address → coordinates"]
+        GEM["Google Gemini<br/>looks at and edits photos"]
+        LOB["Lob<br/>prints and posts mail"]
     end
 
-    DB[("SQLite<br/>leads · costs · events")]
+    DB[("Database (SQLite)<br/>leads · costs · history")]
 
     UI --> REST --> core
     CLI --> core
@@ -96,15 +154,20 @@ flowchart TB
     style DB fill:#fff3e0,stroke:#cb3f14
 ```
 
-The CLI and the API are two front ends onto the **same stage functions**. No
-business logic lives in the HTTP layer.
+The terminal commands and the web dashboard are two doors into the **same
+code**. Neither has logic the other lacks, so anything you can do in the
+browser you can also script, and they can never disagree.
 
 ---
 
-## The state machine
+## Tracking each property through the stages
 
-Every lead carries a state. Each stage picks up whatever is ready for it, so a
-failure at render never re-costs geocoding or qualification.
+Every property moves through a series of stages, and the system records which
+stage each one has reached. Each stage picks up whatever is ready for it.
+
+This matters for cost. If drawing the driveway fails, only that step is
+retried — the system does not pay again to look the address up or fetch the
+photo. Work already done is never repeated.
 
 ```mermaid
 stateDiagram-v2
@@ -128,55 +191,77 @@ stateDiagram-v2
     suppressed --> [*]
 ```
 
-Addresses are normalized and `UNIQUE`, so re-running never duplicates a lead
-and never double-mails an address.
+Addresses are cleaned up and stored uniquely, so running the same scan twice
+never creates a duplicate — and never posts two cards to the same house.
 
 ---
 
-## How the render is made trustworthy
+## How we stop the AI ruining the photo
 
-The model is asked to change only the driveway. Nothing makes it obey, so its
-output is **never trusted directly**.
+This is the part most of the engineering went into.
+
+We ask the AI to change only the driveway. Nothing *forces* it to obey — it
+will sometimes repaint the roof, pave the street, or redraw the whole picture.
+And the moment the house stops looking like the recipient's house, the postcard
+becomes ordinary junk mail.
+
+So the AI's output is **never used as-is**. It is checked, trimmed, and
+partially discarded first.
 
 ```mermaid
 flowchart TB
-    ORIG["Original photo"] --> SEG["1 · Segment<br/><i>before any render</i>"]
-    ORIG --> REN["2 · Render"]
-    SEG --> PRIOR["Driveway prior<br/><i>knows WHAT it is</i>"]
-    REN --> DIFF["Pixel diff<br/><i>knows WHICH changed</i>"]
-    PRIOR --> CONS["3 · Consensus mask<br/>prior ∩ diff"]
+    ORIG["Original photo"] --> SEG["1 · Find the driveway<br/><i>before any editing</i>"]
+    ORIG --> REN["2 · Let the AI edit"]
+    SEG --> PRIOR["Where we think<br/>the driveway is"]
+    REN --> DIFF["Which pixels the<br/>AI actually changed"]
+    PRIOR --> CONS["3 · Overlap of the two"]
     DIFF --> CONS
-    CONS --> QC{"4 · QC"}
-    QC -->|"drift outside mask"| FAIL["✕ reject"]
-    QC -->|"region is not a driveway"| FAIL
-    QC -->|pass| COMP["5 · Composite<br/><b>original outside the mask</b>"]
-    COMP --> OUT["Verified output"]
+    CONS --> QC{"4 · Checks"}
+    QC -->|"changed too much outside"| FAIL["✕ reject"]
+    QC -->|"that is a roof, not a driveway"| FAIL
+    QC -->|pass| COMP["5 · Rebuild the photo<br/><b>original everywhere else</b>"]
+    COMP --> OUT["Verified result"]
 
     style CONS fill:#cb3f14,stroke:#cb3f14,color:#fff
     style COMP fill:#2f7d55,stroke:#2f7d55,color:#fff
     style FAIL fill:#6c757f,stroke:#6c757f,color:#fff
 ```
 
-**Why consensus.** The segmentation prior knows *what a driveway is* but traces
-it loosely. The render diff knows *exactly which pixels changed* but not what
-they are. Their intersection is both precise and semantically anchored. If the
-prior is unusable, it degrades to diff-only rather than failing.
+**Why we combine two signals.** One AI locates the driveway before any editing
+happens, but traces it loosely. Comparing the before and after photos shows
+*exactly* which pixels changed, but not what those pixels are. Where the two
+agree is both precise and actually a driveway. If the first signal is
+unusable, the system falls back to the second rather than giving up.
 
-**Why composite.** The output is rebuilt as *original everywhere, rendered only
-inside the mask*. Pixels outside the mask are **unchanged by construction, not
-by instruction**. Proven by test: when the model rewrites the house, the house
-still survives.
+**Why we rebuild the photo.** The final image is assembled as *the original
+everywhere, with the AI's version pasted in only inside the approved region*.
+Everything outside is untouched **because it was never copied from the AI**,
+not because we asked nicely. There is a test for this: when the AI rewrites
+the house, the house still comes back unchanged.
 
-**Two-axis QC.** Boundary QC measures drift outside the mask. Semantic QC asks
-a vision model what the masked region actually *is* - a roof or road can pass a
-drift check while being completely wrong.
+**Two different checks.** The first measures how much changed outside the
+approved region. The second shows the changed area to an AI and asks what it
+is — because a roof or a road can pass the first check while being completely
+the wrong thing.
+
+**Catching the street.** The most common wrong answer is the public road: it is
+paved, sits right beside the driveway, and is often the largest paved area in
+view. Asked *"is this a driveway?"* the AI agrees. Asked to **count the cars on
+it**, it answers accurately — and a driveway does not hold two cars parked in a
+row. That count overrides the AI's own verdict.
 
 ---
 
-## Why the imagery comes from state GIS
+## Why the photos come from state governments, not Google
 
-Every commercial imagery provider prohibits this use case, and several name
-print and advertising explicitly.
+This was the single biggest constraint on the whole project.
+
+The obvious source for aerial photos is Google. But **Google's terms of use
+forbid exactly what this product does** — taking their imagery, altering it,
+and printing it in an advertisement. So do the terms of every other commercial
+provider we checked. Several name printing and advertising explicitly.
+
+These are the actual quoted terms:
 
 | Provider | Blocking term |
 |---|---|
@@ -185,53 +270,79 @@ print and advertising explicitly.
 | Nearmap · EagleView | Internal use only, no redistribution |
 | Mapbox | *"shall not use Licensed Map Content in print"* |
 | Bing | Permits print ads, but *"no alteration except to resize"* |
-| MLS listing photos | Photographer holds copyright - **$750–$150,000 statutory exposure per photo** |
+| Estate-agent listing photos | The photographer owns the copyright, not the listing site. Using them risks **$750–$150,000 in damages per photo** under US copyright law |
 
-Several US states publish orthoimagery under **CC0-1.0**, the only license that
-cleanly permits commercial derivative works in print.
+**The way around it:** several US states photograph their own territory from
+the air and publish the results under **CC0** — a licence that puts the images
+in the public domain. Anyone may use them, alter them, and print them
+commercially, with no permission required. It is the only licence found that
+cleanly allows all three.
 
 ```
 $ curbside sources
  * indiana           3.0in  CC0-1.0                      IN
    connecticut       3.0in  CC0-1.0                      CT
-   north_carolina    6.0in  public-domain-unrestricted   NC
+   north_carolina   19.7in  public-domain-unrestricted   NC  (too coarse)
 ```
 
-Adding a state is one entry in `curbside/config.py`. Full analysis, including
-the traps found (Texas reports `CC0-1.0` on a $6,000–$375,000/yr
-subscription-only service), is in **[docs/LICENSING.md](docs/LICENSING.md)**.
+The number is how much ground each pixel covers. **3 inches per pixel** is
+sharp enough to make out the edge of a driveway; **20 inches** is not, which
+is why North Carolina is listed but refused for drawing.
+
+Adding a state is one entry in `curbside/config.py`. The full analysis — 
+including the trap where Texas advertises a free licence on a service that
+actually costs $6,000–$375,000 a year — is in
+**[docs/LICENSING.md](docs/LICENSING.md)**.
 
 ---
 
-## Compliance is enforced in code
+## The legal safeguards are built into the code
 
-CC0 resolves copyright. It does **not** resolve right of publicity, intrusion
-upon seclusion, or state UDAP exposure from mailing someone an AI-altered image
-of their own home.
+Using public-domain photos settles the **copyright** question. It does not
+settle three others, and posting someone an AI-altered picture of their home
+raises all three:
 
-- **Disclosure is mandatory** - composition raises rather than produce a piece
-  without one. Weak wording is rejected, not accepted.
-- **Return address and opt-out** are printed on every piece.
-- **Review-required states are gated** until explicitly acknowledged.
-- **Suppression is checked twice** - at discover and again at send.
-- **Live mail requires four independent opt-ins**: a `live_*` key,
-  `CURBSIDE_ALLOW_LIVE_MAIL=1`, a complete return address, and full suppression
-  coverage (DMAchoice, USPS Deceased DNC, NCOALink).
+- **Right of publicity** — using a person's property in an advert aimed at them
+- **Intrusion upon seclusion** — a privacy claim some US states recognise
+- **Consumer-protection law** — an altered image shown without a clear label
+  can count as misleading advertising
 
-See **[docs/COMPLIANCE.md](docs/COMPLIANCE.md)**. *Not legal advice* - it
-encodes conservative defaults so the open questions are reviewed, not missed.
+None of these are solved by having the right photo licence, so the code
+enforces conservative defaults instead of leaving them to memory:
+
+- **Every card must say the image is a rendering.** The software refuses to
+  build a postcard without that wording, and rejects vague substitutes.
+- **Every card carries a return address and a way to opt out** of future mail.
+- **Six states are blocked by default** — California, Illinois, New York,
+  Massachusetts, Washington and Texas have the most assertive privacy and
+  advertising laws. Mailing there requires someone to explicitly acknowledge it.
+- **Do-not-mail addresses are checked twice** — when the lead is created, and
+  again immediately before sending.
+- **Actually posting mail requires four separate switches** to be turned on,
+  so it cannot happen by accident. One of them is proof that the national
+  opt-out registries have been loaded — the mail industry's do-not-contact
+  lists, including one for deceased recipients.
+
+See **[docs/COMPLIANCE.md](docs/COMPLIANCE.md)** for the detail. **This is not
+legal advice** — it encodes cautious defaults so the open questions get
+reviewed by a lawyer rather than quietly missed.
 
 ---
 
-## Finding recently-sold homes - free
+## Finding homes that recently sold — for free
 
-Property transfers are public record, so several jurisdictions publish them
-directly. Both adapters are keyless and free.
+The original brief was to target people who had just bought a house, on the
+theory that a new owner still has budget for exterior work.
 
-| Source | Freshness | Sale price | Licence |
+In the US, **property sales are public record** — when a house changes hands,
+the county writes it in a public register. That is why an entire industry
+resells this data. It also means some of it can be read directly from the
+government, at no cost and with no account required.
+
+| Source | How current | Includes sale price | Licence |
 |---|---|---|---|
-| **Wake County, NC** | ~9 days | yes | unstated (public records) |
-| **Connecticut** | ~11 months | yes | **Public Domain** |
+| **Wake County, NC** (Raleigh) | about 9 days behind | yes | not stated (public records) |
+| **Connecticut** (statewide) | about 11 months behind | yes | **public domain** |
 
 ```bash
 $ curbside sales-sources
@@ -241,74 +352,91 @@ $ curbside run --sales wake_nc --sold-within-months 6 \
                --min-price 200000 --max-year-built 2005
 ```
 
-Rows carry coordinates (Wake returns parcel polygons, CT returns points), so
-these leads **skip geocoding entirely** and its 1 req/sec limit.
+These records already include map coordinates, so those properties **skip the
+address-lookup step entirely** — which is both faster and avoids the one-request-
+per-second rate limit on the free address lookup service.
 
-Two filters that matter:
+Two filters worth understanding:
 
-- `--sold-within-months` is measured from the **dataset's newest record**, not
-  from today. Portals publish on a lag, so a calendar window often returns
-  nothing.
-- `--max-year-built` excludes new construction. Recent sales skew heavily to
-  new builds whose driveways are already new - in Wake County, filtering to
-  homes built before 2000 cuts 7,650 candidates to 2,806 genuinely worth
-  mailing.
+- `--sold-within-months` counts back from the **newest record in the data**,
+  not from today. Government sites publish on a delay, so asking for "the last
+  six months" by the calendar would often return nothing at all.
+- `--max-year-built` excludes newly built houses. Recent sales skew heavily
+  towards new construction, whose driveways are already new — in Wake County,
+  filtering to homes built before 2000 cut 7,650 candidates down to 2,806
+  actually worth mailing.
 
-**Intended use.** These are wired up for development and verification. Only
-Connecticut carries an explicit public-domain grant; the county portals
-publish openly but state no licence, which means *no restriction found*, not
-*commercial redistribution granted*. Each adapter reports `commercial_use` so
-the distinction stays visible. A commercial campaign should review the
-publisher's terms or move to a licensed source.
+**What these are for.** They are wired up for development and testing. Only
+Connecticut grants explicit public-domain rights. The county sites publish
+openly but state no licence at all — which means *we found no restriction*,
+not *commercial use is permitted*. The code records that distinction for each
+source rather than blurring it. A real commercial campaign should either get
+the publisher's terms reviewed or buy a properly licensed list.
 
-## Quick start
+## Running it yourself
+
+You need Python 3.12, Node.js, and a Google Gemini API key (the account must
+have billing enabled — the image-editing model has no free tier).
 
 ```bash
+# install the Python side, then the web page's dependencies
 pip install -e ".[api,dev]"
 cd web && npm install && cd ..
 
-# secrets live outside the repo
+# The API key is kept OUTSIDE the project folder so it can never be
+# committed to git by accident.
 echo 'GEMINI_API_KEY=AIza...' > ~/.gemini_env && chmod 600 ~/.gemini_env
-cp .env.example .env          # return address - required to compose a piece
 
+# A postal return address is legally required on mailed advertising, so the
+# software refuses to build a postcard without one.
+cp .env.example .env
+
+# load both into the current terminal (needed once per terminal window)
 set -a; source ~/.gemini_env; source .env; set +a
 ```
 
-### The product - block scan
+### The web version
 
 ```bash
-./run-local.sh                # starts API :8000 and dashboard :5173
+./run-local.sh     # starts both halves: the engine and the web page
 ```
 
-Open <http://localhost:5173>, type an Indiana address or click a verified
-example. About 50–70 seconds for a six-home block, roughly 20c of model calls.
+Then open <http://localhost:5173> and type an Indiana address, or click one of
+the examples. A six-home block takes 50–70 seconds and costs about 20 cents in
+AI calls.
 
-### The operations console - CLI
+*(It starts two programs: the engine on port 8000 and the web page on 5173.
+The page talks to the engine. Both need to be running.)*
+
+### The terminal version
 
 ```bash
-curbside doctor               # what is configured, what would block a send
-curbside --budget 3.00 run    # batch from data/addresses.txt
-curbside review               # pending approval, with QC detail
+curbside doctor               # shows what is configured and what is missing
+curbside --budget 3.00 run    # process the addresses in data/addresses.txt
+curbside review               # what is waiting for approval, with check results
 curbside approve --all
-curbside mail                 # dry run by default, sends nothing
+curbside mail                 # practice run by default — sends nothing
 ```
 
-Global flags precede the subcommand: `--budget`, `--limit`, `--db`.
+Settings like `--budget` go **before** the command word, not after:
+`curbside --budget 3.00 run`, not `curbside run --budget 3.00`.
 
 ### What costs money
 
-Free: geocoding, imagery, compositing, QC arithmetic, postcard composition,
-tests, dry-run mail. Only the model calls bill.
+Almost nothing does. Address lookup, the aerial photos, the quality checks,
+building the postcard, the test suite, and practice mail runs are all free.
+**Only the AI calls are billed.**
 
 | Action | Cost |
 |---|---|
-| Qualify one address | $0.0009 |
-| Segment + render + semantic QC | ~$0.07 |
-| **A qualified lead, end to end** | **~$0.07** |
-| A six-home block scan | ~$0.20 |
+| Judging one driveway | $0.0009 (a tenth of a cent) |
+| Drawing a new driveway + checking it | about $0.07 |
+| A six-home block scan | about $0.20 |
 
-`CURBSIDE_BUDGET` is a hard ceiling checked before every paid call. It guards
-API spend only - modelled print-and-postage never consumes it.
+`CURBSIDE_BUDGET` sets a hard ceiling, checked before every paid call, so the
+system stops rather than overspends. It counts only real AI charges —
+the estimated printing and postage costs shown in reports are not real money
+and never eat into it.
 
 See **[docs/RUNNING.md](docs/RUNNING.md)** for troubleshooting.
 
@@ -316,18 +444,20 @@ See **[docs/RUNNING.md](docs/RUNNING.md)** for troubleshooting.
 
 ## Deployment
 
-Deployed live at **<https://web-zeta-dusky-84.vercel.app/>** - the React build
-sits on Vercel; the API runs as a container on ECS Fargate behind a load
-balancer.
+Deployed and running at **<https://web-zeta-dusky-84.vercel.app/>**.
+
+The web page is hosted on **Vercel** (free, fast, gives you HTTPS). The
+application itself runs on **AWS** as a container — the app packaged with
+everything it needs — so it behaves identically on a laptop and in the cloud.
 
 ```mermaid
 flowchart LR
-    U["👤 Browser"] -->|HTTPS| V["Vercel<br/>React build"]
-    V -->|"/api/* proxied<br/>server-side"| ALB["ALB :80"]
-    ALB --> ECS["ECS Fargate<br/>FastAPI container"]
-    ECS --> SM["Secrets Manager<br/>GEMINI_API_KEY"]
-    ECS --> GIS["State GIS<br/>CC0 imagery"]
-    ECS --> GEM["Gemini API"]
+    U["👤 Browser"] -->|"secure (HTTPS)"| V["Vercel<br/>hosts the web page"]
+    V -->|"passes API calls<br/>through server-side"| ALB["Load balancer<br/>(AWS)"]
+    ALB --> ECS["The application<br/>running as a container"]
+    ECS --> SM["Secrets Manager<br/>keeps the API key<br/>out of the code"]
+    ECS --> GIS["State aerial photos"]
+    ECS --> GEM["Google Gemini"]
 
     style ECS fill:#cb3f14,stroke:#cb3f14,color:#fff
     style V fill:#2f7d55,stroke:#2f7d55,color:#fff
@@ -338,7 +468,7 @@ export AWS_PROFILE=<profile>
 export AWS_REGION=us-east-1
 export GEMINI_API_KEY=...
 
-./deploy-ecs.sh          # builds, pushes to ECR, deploys, prints the ALB DNS
+./deploy-ecs.sh          # packages the app, uploads it, deploys, prints the URL
 
 cd web
 sed -i "s|REPLACE_WITH_ALB_DNS|<alb-dns>|" vercel.json
@@ -347,37 +477,45 @@ npm run build && npx vercel deploy --prod
 ./destroy-ecs.sh         # removes everything, stops billing
 ```
 
-### Three things this deployment had to solve
+### Four problems this deployment hit
 
-**App Runner was unavailable.** A free-plan AWS account returns
-`SubscriptionRequiredException` for App Runner in every region. ECS Fargate
-uses primitives every account has, so `deploy-ecs.sh` is the working path;
-`deploy-apprunner.sh` is kept for accounts where it is enabled.
+Recorded because each cost real time, and the next person will hit them too.
 
-**The ALB serves HTTP only.** Terminating TLS on it needs an ACM certificate,
-which needs a domain. A browser on an HTTPS page refuses to call an HTTP API,
-so `web/vercel.json` proxies `/api` **server-side** - the browser stays on
-HTTPS and the plaintext hop happens between Vercel and AWS. The frontend
-defaults to a relative `/api`, so no build-time API URL is needed.
+**AWS's simplest option was unavailable.** App Runner, the easiest way to run a
+container, is switched off on free-plan AWS accounts — it refuses in every
+region. The fallback (ECS Fargate) uses building blocks every account has, so
+`deploy-ecs.sh` is the path that works. `deploy-apprunner.sh` is kept for
+accounts where the simpler option is enabled.
 
-**ECS creates its service-linked role lazily.** The first `create-service`
-call on a new account fails *while* creating `AWSServiceRoleForECS`. Re-running
-succeeds. The script is idempotent, so a retry is the fix.
+**The AWS address is insecure (`http://`), the web page is secure
+(`https://`).** Browsers block a secure page from calling an insecure one.
+Giving AWS a proper certificate requires owning a domain name. Instead, the
+web page asks *Vercel* for data, and Vercel fetches it from AWS behind the
+scenes — so the browser only ever sees a secure connection, and the insecure
+hop happens server-side where no browser is watching.
 
-**State is container-local.** No EFS volume: a task restart clears generated
-scans and the user scans again. Acceptable for a short-lived demo; mount a
-volume or sync to S3 if results need to survive.
+**The first deploy always fails.** AWS creates a required internal permission
+the first time you deploy — but the deploy that triggers it is the one that
+fails. Running the script a second time works. It is safe to re-run, so that
+is the fix. This is not a configuration error, and chasing it as one wastes
+an hour.
+
+**Nothing is saved between restarts.** There is no attached disk, so if the
+container restarts, generated postcards are cleared and the user scans again.
+Fine for a short demo. For anything longer, attach storage or save results to
+cloud storage instead.
 
 ### Cost
 
 | | Two days |
 |---|---|
-| Fargate 1 vCPU / 2 GB | $2.37 |
-| ALB hourly + LCU | $1.46 |
-| ECR + Secrets Manager | $0.03 |
+| Running the application | $2.37 |
+| Load balancer (the public address) | $1.46 |
+| Storage for the packaged app + the API key | $0.03 |
 | **Total** | **$3.86** |
 
-Left running a month it is **$58.74** - tear it down.
+Left running for a month it becomes **$58.74**, so `./destroy-ecs.sh` removes
+everything when the demo is over.
 
 See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the full walkthrough and
 **[docs/DEMO.md](docs/DEMO.md)** for troubleshooting.
@@ -388,33 +526,34 @@ See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the full walkthrough and
 
 ```
 curbside/
-  config.py             settings, imagery sources, QC thresholds
-  store.py              SQLite state machine, costs, events
-  pipeline.py           stages: discover → mail, concurrent, scopeable
-  cli.py                command-line interface
-  api/app.py            FastAPI: block scan, leads, stats, per-card send
+  config.py             settings: which state, spending caps, check thresholds
+  store.py              the database — every property, its stage, what it cost
+  pipeline.py           the seven stages, run several properties at once
+  cli.py                the terminal commands
+  api/app.py            the web interface other programs talk to
   sources/
-    geocode.py          OSM Nominatim → US Census fallback
-    imagery.py          state GIS orthoimagery, retries on 5xx
-    block.py            one address → every neighbour worth mailing
-    sales.py            recently-sold records from public data
-  vision/gemini.py      qualify, render ladder, structured vision
+    geocode.py          address → map coordinates (two free services)
+    imagery.py          fetches the state's aerial photos, retries on failure
+    block.py            one address → every neighbour on that block
+    sales.py            recently-sold homes from public government records
+  vision/gemini.py      talking to the AI: judging photos and editing them
   render/
-    segmentation.py     driveway priors, consensus masking
-    compositing.py      masked merge, boundary + semantic QC
-  compose/postcard.py   300 DPI composition, mask-centred framing
-  mail/providers.py     dry-run and Lob adapters
-  compliance/policy.py  disclosure, state gating, campaign preflight
+    segmentation.py     working out where the driveway is
+    compositing.py      keeping the original photo outside the edited area,
+                        and the checks that reject bad edits
+  compose/postcard.py   laying out the printable postcard
+  mail/providers.py     practice-run sender, plus a real print-and-post service
+  compliance/policy.py  the legal safeguards: disclosure, blocked states
 
-web/                    React dashboard (Vite) + vercel.json proxy
-tests/                  117 tests, no network or API keys required
-docs/                   running, licensing, compliance, deployment
+web/                    the web page people use
+tests/                  117 automated checks, no internet or API key needed
+docs/                   running it, photo licensing, legal notes, deployment
 
-Dockerfile              container image
-deploy-ecs.sh           deploy to ECS Fargate + ALB    ← the working path
-destroy-ecs.sh          tear it all down
-deploy-apprunner.sh     App Runner variant (needs a paid-plan account)
-run-local.sh            start API + dashboard together
+Dockerfile              recipe for packaging the app to run anywhere
+deploy-ecs.sh           deploy to AWS            ← the one that works
+destroy-ecs.sh          remove everything, stop the billing
+deploy-apprunner.sh     simpler AWS option (needs a paid-plan account)
+run-local.sh            start both halves on your own machine
 ```
 
 ---
@@ -422,10 +561,14 @@ run-local.sh            start API + dashboard together
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -q          # 117 tests, no network, no API keys
-python3 -m pytest tests/ -q -m ""    # + 7 that hit live public endpoints
+python3 -m pytest tests/ -q          # 117 checks — no internet, no API key
+python3 -m pytest tests/ -q -m ""    # plus 7 that call live public services
 ```
 
-Network tests are marked and deselected by default, so the suite runs offline.
-The load-bearing test asserts that when the model rewrites the house,
-compositing returns the original - the guarantee the render pipeline rests on.
+The seven that need the internet are excluded by default, so the suite runs
+anywhere in about two seconds and costs nothing.
+
+The most important one proves the safety guarantee: it feeds in an AI result
+that has wrecked the house, and asserts the finished image still contains the
+**original** house. That is the promise the whole rendering pipeline rests on,
+so it is tested rather than assumed.
