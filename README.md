@@ -209,27 +209,6 @@ CC0 resolves copyright. It does **not** resolve right of publicity, intrusion
 upon seclusion, or state UDAP exposure from mailing someone an AI-altered image
 of their own home.
 
-```mermaid
-flowchart LR
-    L["Approved lead"] --> D{"Disclosure<br/>on the piece?"}
-    D -->|no| B1["✕ never composed"]
-    D -->|yes| R{"Return address<br/>+ opt-out?"}
-    R -->|no| B2["✕ never composed"]
-    R -->|yes| S{"Suppressed?"}
-    S -->|yes| B3["✕ suppressed"]
-    S -->|no| ST{"Review-required<br/>state?"}
-    ST -->|"CA IL NY MA WA TX"| ACK{"Acknowledged?"}
-    ACK -->|no| B4["✕ blocked"]
-    ACK -->|yes| SEND["✉️ send"]
-    ST -->|no| SEND
-
-    style SEND fill:#2f7d55,stroke:#2f7d55,color:#fff
-    style B1 fill:#cb3f14,stroke:#cb3f14,color:#fff
-    style B2 fill:#cb3f14,stroke:#cb3f14,color:#fff
-    style B3 fill:#6c757f,stroke:#6c757f,color:#fff
-    style B4 fill:#b7791f,stroke:#b7791f,color:#fff
-```
-
 - **Disclosure is mandatory** - composition raises rather than produce a piece
   without one. Weak wording is rejected, not accepted.
 - **Return address and opt-out** are printed on every piece.
