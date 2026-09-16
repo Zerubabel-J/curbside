@@ -54,6 +54,26 @@ as tight around the driveway as possible.
 If no driveway is visible, set found=false and return zeros."""
 
 
+STREET_POLYGON_PROMPT = """This is a street-level photograph of a US
+residential property, taken from the road looking toward the house.
+
+Locate the DRIVEWAY: the paved strip running from the kerb in the foreground
+back toward the garage or house, including any parking apron. In this view it
+is widest at the bottom of the frame and narrows as it recedes.
+
+Do NOT locate: the lawn on either side of it, the public road across the
+foreground, the walkway to the front door, the house, or a neighbour's
+driveway. The lawn is the most common mistake - the box must not extend
+sideways into grass.
+
+Return the driveway's tight bounding box in normalized coordinates, where
+x0,y0 is the top-left corner and x1,y1 the bottom-right, with x=0 at the left
+edge, x=1 at the right edge, y=0 at the top, y=1 at the bottom. Make the box
+as tight around the paved surface as possible.
+
+If no driveway is visible, set found=false and return zeros."""
+
+
 def _to_array(path):
     im = Image.open(str(path)).convert("RGB")
     return np.asarray(im).astype(np.float32), im.size
@@ -67,11 +87,15 @@ def box_to_mask(box, size, feather=2, pad=0.02):
     """
     w, h = size
     vals = [float(box.get(k, 0)) for k in ("x0", "y0", "x1", "y1")]
-    if max(vals) > 1.5:                       # pixel coords
-        nx = lambda v: v / w
-        ny = lambda v: v / h
-    else:                                      # already normalized
-        nx = ny = lambda v: v
+
+    # Models mix the two conventions within a single box - "x0": 673 beside
+    # "x1": 1.0 is a real response. Deciding per value rather than per box
+    # keeps the mixed case from collapsing to an empty rectangle, which then
+    # silently drops the prior and leaves the mask to raw pixel difference.
+    def norm(v, extent):
+        return v / extent if v > 1.5 else v
+    nx = lambda v: norm(v, w)
+    ny = lambda v: norm(v, h)
     x0 = max(0.0, nx(vals[0]) - pad) * w
     y0 = max(0.0, ny(vals[1]) - pad) * h
     x1 = min(1.0, nx(vals[2]) + pad) * w
@@ -154,16 +178,36 @@ def spectral_mask(image_path, sat_max=0.22, val_range=(0.22, 0.82)):
     return np.asarray(out).astype(np.float32) / 255.0
 
 
-def segment(image_path, key=None, model=None, strategy="grounded"):
-    """Return (mask, meta). Falls back to spectral if the model is unavailable."""
+def segment(image_path, key=None, model=None, strategy="grounded", prompt=None):
+    """Return (mask, meta). Falls back to spectral if the model is unavailable.
+
+    `prompt` selects the view. Asking for a top-down driveway in a photograph
+    taken from the kerb gets an honest "not found", and the mask then falls
+    back to raw pixel difference - which knows what changed but not what a
+    driveway is, so it will happily accept a paved lawn.
+    """
     _, size = _to_array(image_path)
 
     if strategy == "grounded" and key:
         from curbside.vision import gemini
+        from curbside.config import settings
+        if prompt is None:
+            prompt = (STREET_POLYGON_PROMPT if settings.street_view
+                      else POLYGON_PROMPT)
         result, err, cost = gemini.ask_json(
-            image_path, POLYGON_PROMPT, POLYGON_SCHEMA, key, model=model)
+            image_path, prompt, POLYGON_SCHEMA, key, model=model)
         if not err and result and result.get("found") and result.get("box"):
             raw = box_to_mask(result["box"], size)
+            # An empty mask from a box the model called "found" means the box
+            # was malformed - out of frame, or inverted. Treating that as a
+            # legitimate prior would drop it and fall through to pixel diff
+            # without saying so.
+            if raw.mean() <= 0.002:
+                mask = spectral_mask(image_path)
+                return mask, {"strategy": "spectral-fallback",
+                              "reason": f"unusable box {result['box']}",
+                              "coverage": round(float(mask.mean()), 4),
+                              "cost": cost}
             if 0.002 < raw.mean() < 0.75:
                 refined = refine_by_appearance(image_path, raw)
                 return refined, {
@@ -185,8 +229,51 @@ def segment(image_path, key=None, model=None, strategy="grounded"):
                   "coverage": round(float(mask.mean()), 4), "cost": 0.0}
 
 
+def centred_enough(prior_mask, max_offset=0.30, min_edge_gap=0.02):
+    """Is the segmented driveway the subject property's, or a neighbour's?
+
+    Street View frames a point on the road, not a parcel, so a shot of one
+    house routinely contains the frontage of two others. The camera is aimed
+    at the subject, so its driveway sits near the horizontal centre; a
+    driveway hard against the frame edge belongs to somebody else.
+
+    Returns (ok, detail). Vertical position is ignored - a driveway correctly
+    runs from the bottom edge toward the house.
+    """
+    import numpy as _np
+    if prior_mask is None or prior_mask.mean() < 0.002:
+        return False, {"reason": "no driveway region to place"}
+
+    cols = prior_mask.sum(axis=0)
+    total = cols.sum()
+    if total <= 0:
+        return False, {"reason": "empty driveway region"}
+
+    centre = float((cols * _np.arange(cols.size)).sum() / total) / cols.size
+    offset = abs(centre - 0.5)
+
+    present = _np.nonzero(cols > cols.max() * 0.05)[0]
+    left_gap = float(present[0]) / cols.size
+    right_gap = 1.0 - float(present[-1] + 1) / cols.size
+
+    detail = {"centre_x": round(centre, 3), "offset": round(offset, 3),
+              "left_gap": round(left_gap, 3), "right_gap": round(right_gap, 3)}
+
+    if offset > max_offset:
+        detail["reason"] = (f"driveway sits at x={centre:.2f}, too far from the "
+                            "centre to be this property's")
+        return False, detail
+    # Touching both edges means the region spans the whole frontage, which is
+    # a road or a terrace of driveways rather than one lot's.
+    if left_gap < min_edge_gap and right_gap < min_edge_gap:
+        detail["reason"] = "region spans the full frame width"
+        return False, detail
+    return True, detail
+
+
 def consensus_mask(before_path, after_path, prior_mask, threshold=26,
-                   min_blob_frac=0.004, feather=2, dilate_prior=25):
+                   min_blob_frac=0.004, feather=2, dilate_prior=25,
+                   require_prior=False):
     """Combine a segmentation prior with the observed render diff.
 
     Neither signal is reliable alone:
@@ -199,6 +286,12 @@ def consensus_mask(before_path, after_path, prior_mask, threshold=26,
 
     Falls back to the diff alone when the prior is unusable, so a bad
     segmentation degrades to the previous behaviour rather than breaking.
+
+    `require_prior` disables that fallback. From the kerb the frame contains
+    lawn, walkways and the neighbours' frontage, and a diff-only mask accepts
+    whatever the renderer changed - which is how a paved lawn reaches a
+    postcard. Refusing is the better failure: it costs a lead, not a mailing
+    that shows the wrong surface paved.
     """
     from curbside.render.compositing import derive_mask
 
@@ -206,6 +299,8 @@ def consensus_mask(before_path, after_path, prior_mask, threshold=26,
                             min_blob_frac=min_blob_frac, feather=feather)
 
     if prior_mask is None or prior_mask.mean() < 0.002 or prior_mask.mean() > 0.60:
+        if require_prior:
+            return None, {"mode": "refused", "reason": "no usable driveway prior"}
         return diff_mask, {"mode": "diff-only", "reason": "prior unusable"}
 
     # Dilate the prior to tolerate imprecise tracing.
@@ -220,6 +315,11 @@ def consensus_mask(before_path, after_path, prior_mask, threshold=26,
     # the polygon was probably in the wrong place entirely.
     kept = consensus.sum() / max(diff_mask.sum(), 1.0)
     if kept < 0.25:
+        if require_prior:
+            return None, {"mode": "refused",
+                          "reason": f"driveway prior kept only {kept:.0%} of "
+                                    "the change - the render moved something else",
+                          "prior_coverage": round(float(prior_mask.mean()), 4)}
         return diff_mask, {"mode": "diff-only", "reason": f"prior kept only {kept:.0%}",
                            "prior_coverage": round(float(prior_mask.mean()), 4)}
 

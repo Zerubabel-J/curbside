@@ -173,3 +173,64 @@ def test_model_error_passes_through(monkeypatch):
     from curbside.render.compositing import verify_region
     r, err, _ = verify_region("b.jpg", "m.jpg", "key")
     assert err == "boom" and r is None
+
+
+# ------------------------------------------- street-level framing and refusal
+
+def test_frame_fov_narrows_with_distance():
+    """A fixed angle photographs a fixed slice of the world, so from the far
+    kerb it takes in the neighbours. The angle has to follow the distance."""
+    from curbside.sources.streetview import frame_fov
+    near, far = frame_fov(14), frame_fov(45)
+    assert near > far, "closer houses need a wider angle, not narrower"
+    assert 40 <= far <= 90 and 40 <= near <= 90
+
+
+def test_frame_fov_survives_a_missing_distance():
+    from curbside.sources.streetview import frame_fov
+    assert frame_fov(None, default=80) == 80
+    assert frame_fov(0, default=80) == 80
+
+
+def test_neighbours_driveway_is_rejected_by_position():
+    """The camera is aimed at the subject property, so its driveway is near
+    the centre. One hard against the frame edge belongs to somebody else, and
+    rendering it mails a homeowner a picture of next door."""
+    import numpy as np
+    from curbside.render.segmentation import centred_enough
+
+    def strip(x0, x1, w=100, h=100):
+        m = np.zeros((h, w), dtype=np.float32)
+        m[60:, x0:x1] = 1.0
+        return m
+
+    ok, _ = centred_enough(strip(38, 62))
+    assert ok, "a centred driveway must pass"
+
+    for x0, x1 in ((82, 100), (0, 18)):
+        ok, detail = centred_enough(strip(x0, x1))
+        assert not ok and "centre" in detail["reason"]
+
+    ok, detail = centred_enough(strip(0, 100))
+    assert not ok and "full frame" in detail["reason"]
+
+
+def test_street_masking_refuses_without_a_driveway_prior():
+    """Diff-only masking knows what changed but not what a driveway is, so it
+    accepts a paved lawn. At street level that must refuse, not guess."""
+    import numpy as np
+    from PIL import Image
+    from curbside.render.segmentation import consensus_mask
+
+    import tempfile, pathlib
+    d = pathlib.Path(tempfile.mkdtemp())
+    a = np.full((64, 64, 3), 120, dtype=np.uint8)
+    b = a.copy(); b[40:60, 10:50] = 220
+    pa, pb = d / "a.jpg", d / "b.jpg"
+    Image.fromarray(a).save(pa); Image.fromarray(b).save(pb)
+
+    lenient, meta = consensus_mask(pa, pb, None, require_prior=False)
+    assert lenient is not None and meta["mode"] == "diff-only"
+
+    strict, meta = consensus_mask(pa, pb, None, require_prior=True)
+    assert strict is None and meta["mode"] == "refused"

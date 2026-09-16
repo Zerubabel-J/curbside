@@ -99,6 +99,28 @@ def coverage(address=None, latlng=None, key=None, radius=60):
     return d, None
 
 
+#: Typical US suburban lot frontage. The camera is framed to cover about this
+#: much of the facade plus a margin, so neighbours fall outside the frame.
+LOT_WIDTH_M = 22.0
+
+#: Google clamps fov to 10-120; these are the useful bounds for a facade.
+MIN_FOV, MAX_FOV = 40, 90
+
+
+def frame_fov(distance_m, default=80, lot_width_m=LOT_WIDTH_M):
+    """Field of view that fits about one lot width at `distance_m`.
+
+    Pure trigonometry: the angle subtended by a lot of known width at a known
+    distance. Close to the kerb that is a wide angle, further back a narrow
+    one - the opposite of a fixed setting, which frames tightly when far and
+    loosely when near.
+    """
+    if not distance_m or distance_m <= 1:
+        return default
+    angle = 2 * math.degrees(math.atan((lot_width_m / 2) / distance_m))
+    return int(max(MIN_FOV, min(MAX_FOV, round(angle))))
+
+
 def fetch(address, out_path, key=None, size=MAX_SIZE, fov=80, pitch=8,
           timeout=60, attempts=2, parcel_source=None):
     """Front-of-house photograph, camera aimed at the property.
@@ -137,6 +159,13 @@ def fetch(address, out_path, key=None, size=MAX_SIZE, fov=80, pitch=8,
     cam = meta["location"]
     head = bearing(cam["lat"], cam["lng"], lat, lon)
     dist = _haversine_m(cam["lat"], cam["lng"], lat, lon)
+
+    # Frame the lot, not the streetscape. A fixed field of view photographs a
+    # fixed angle, so from 20 m it takes in both neighbours and from 50 m it
+    # takes in the whole terrace - and the renderer has no way to tell which
+    # driveway belongs to the address it was given. Choosing the angle from
+    # the distance keeps roughly one lot width in frame at any range.
+    fov = frame_fov(dist, fov)
 
     q = urllib.parse.urlencode({
         "size": f"{size}x{size}", "pano": meta["pano_id"],

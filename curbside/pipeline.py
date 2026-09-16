@@ -11,7 +11,8 @@ from curbside.sources.imagery import fetch
 from curbside.vision import gemini
 from curbside.render.compositing import (composite, qc, save_mask_preview,
                                          verify_region, verify_region_street)
-from curbside.render.segmentation import segment, consensus_mask
+from curbside.render.segmentation import (segment, consensus_mask,
+                                        centred_enough)
 from curbside.compose.postcard import build as build_postcard, focus_from_mask
 from curbside.compliance import policy
 from curbside.mail.providers import (get_provider, load_suppression,
@@ -206,6 +207,21 @@ def qualify(store, key, budget, limit=None, log=print, workers=None, only=None):
             log(f"  [{lead['id']}] qualify failed: {err[:80]}")
             failed += 1
             continue
+        # A front walkway reads like a driveway from the kerb, and the model
+        # will call it one. The physical test overrides its verdict: a strip
+        # that takes no car and never meets the road is a footpath, and
+        # paving it produces a postcard showing a paved garden.
+        if settings.street_view and q.get("qualified"):
+            cars = q.get("cars_wide")
+            if cars is not None and cars < 1:
+                q = {**q, "qualified": False,
+                     "reason": f"paved strip takes {cars} cars - a walkway, "
+                               "not a driveway"}
+            elif q.get("meets_road") is False:
+                q = {**q, "qualified": False,
+                     "reason": "paved strip does not meet the road - "
+                               "a walkway, not a driveway"}
+
         if not q["qualified"]:
             store.advance(lead["id"], "rejected", note=q["reason"], qualification=q)
             log(f"  [{lead['id']}] REJECT  {q['surface']} "
@@ -258,7 +274,16 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
         threshold = (settings.mask_threshold_street if settings.street_view
                      else settings.mask_threshold)
         mask, mask_meta = consensus_mask(lead["before_path"], raw, prior,
-                                         threshold=threshold)
+                                         threshold=threshold,
+                                         require_prior=settings.street_view)
+        if mask is None:
+            # Street level refuses rather than guessing: the frame holds lawn,
+            # walkways and the neighbours' frontage, and a mask built from the
+            # change alone cannot tell which of them the renderer touched.
+            out["report"] = {"passed": False, "mask": mask_meta,
+                             "segmentation": seg_meta, "attempt": tag,
+                             "reasons": [mask_meta["reason"]]}
+            return out, False
         # A street-level driveway covers a predictable slice of the frame, so
         # the size bound is tighter there than from above.
         max_mask = (settings.qc_max_mask_frac_street if settings.street_view
@@ -296,6 +321,19 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
             base["seg_meta"] = seg_meta
             if seg_meta.get("cost"):
                 base["costs"].append(("segment", seg_meta["cost"], settings.qualify_model))
+
+            # Street View frames a point on the road, so one house's photo
+            # routinely contains the neighbours' frontage too. Check whose
+            # driveway was found before paying to render it - a render of the
+            # house next door is wrong however well it is composited.
+            if settings.street_view and use_segmentation:
+                ok, framing = centred_enough(prior)
+                base["framing"] = framing
+                if not ok:
+                    base["report"] = {"passed": False, "framing": framing,
+                                      "segmentation": seg_meta,
+                                      "reasons": [framing["reason"]]}
+                    return base
 
             ladder = (gemini.STREET_RENDER_LADDER if settings.street_view
                       else gemini.RENDER_LADDER)

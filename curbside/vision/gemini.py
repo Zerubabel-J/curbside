@@ -41,10 +41,21 @@ QUALIFY_SCHEMA = {
                                "description": "1 = pristine new, 10 = badly cracked/stained/broken"},
         "obstruction":        {"type": "string",
                                "enum": ["none","trees","shadow","vehicles","heavy"]},
+        # Forcing a number here is what separates a driveway from a front
+        # walkway. Asked "is this a driveway?" the model agrees; asked how
+        # many cars fit on it, it answers honestly.
+        "cars_wide":          {"type": "integer",
+                               "description": "cars that could park side by "
+                                              "side on the paved strip; 0 for "
+                                              "a footpath"},
+        "meets_road":         {"type": "boolean",
+                               "description": "does the paved strip meet the "
+                                              "kerb at a vehicle crossing"},
         "qualified":          {"type": "boolean"},
         "reason":             {"type": "string", "description": "one sentence"},
     },
-    "required": ["single_family_home","driveway_visible","surface",
+    "required": ["single_family_home","driveway_visible","surface","cars_wide",
+                 "meets_road",
                  "condition_score","obstruction","qualified","reason"],
 }
 
@@ -197,9 +208,17 @@ The driveway is the paved strip running from the street toward the house or
 garage, receding away from the camera. It is NOT the road across the
 foreground, and NOT the footpath crossing left to right.
 
-REJECT when: no driveway is visible; the house is hidden behind trees, fences
-or hedges; the shot faces down the street rather than at a property; or it is
-not a single-family home.
+A front walkway looks similar from the kerb and is the most common false
+positive, so decide it physically rather than by appearance. Before answering,
+state how many cars could park side by side on the paved strip, and whether it
+meets the kerb at a dropped kerb or vehicle crossing. A driveway takes at
+least one car and meets the road; a walkway to the front door takes none and
+usually ends at a step or a path. If it would not take a car, it is not a
+driveway.
+
+REJECT when: no driveway is visible; the only paved path is a walkway to the
+front door; the house is hidden behind trees, fences or hedges; the shot faces
+down the street rather than at a property; or it is not a single-family home.
 
 Score condition 1-10 where 1 is pristine and 10 badly broken. A low score
 still qualifies - the offer is an upgrade, not only a repair."""
