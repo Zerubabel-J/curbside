@@ -431,3 +431,29 @@ def test_street_semantic_check_inverts_the_aerial_heuristics():
     recedes toward the house, so the aerial cues mean the opposite."""
     from curbside.render.compositing import verify_region, verify_region_street
     assert verify_region_street is not verify_region
+
+
+def test_a_lead_refused_before_masking_does_not_crash_the_scan(store, monkeypatch, tmp_path):
+    """A lead rejected on framing never builds a mask, so it has no preview
+    image. Reading that field unconditionally took down the whole scan with a
+    KeyError after the renders had already been paid for."""
+    from curbside.config import settings
+    monkeypatch.setattr(settings, "view", "street")
+    monkeypatch.setattr(settings, "source", "miami_dade")
+    monkeypatch.setattr(settings, "images_dir", tmp_path)
+    monkeypatch.setattr(settings, "output_dir", tmp_path)
+
+    lid, _ = store.add_lead("1 SW 1st St, Miami, FL 33130")
+    store.advance(lid, "qualified", before_path=str(tmp_path / "b.jpg"))
+
+    # Segmentation finds a driveway hard against the frame edge - a neighbour's.
+    import numpy as np
+    edge = np.zeros((64, 64), dtype=np.float32)
+    edge[40:, 56:] = 1.0
+    monkeypatch.setattr("curbside.pipeline.segment", lambda *a, **k: (edge, {"strategy": "test"}))
+
+    res = pipeline.render(store, "k", pipeline.Budget(store, cap=1.0),
+                          log=lambda *_: None)
+
+    assert res["failed"] == 1 and res["rendered"] == 0
+    assert store.get(lid)["state"] == "failed"

@@ -326,7 +326,12 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
             # routinely contains the neighbours' frontage too. Check whose
             # driveway was found before paying to render it - a render of the
             # house next door is wrong however well it is composited.
-            if settings.street_view and use_segmentation:
+            # Only the grounded box localises one driveway. The spectral
+            # fallback highlights every paved surface in frame - road and
+            # footpath included - so it always spans the full width, and
+            # judging its position rejects every lead on the block.
+            if (settings.street_view and use_segmentation
+                    and seg_meta.get("strategy") == "grounded"):
                 ok, framing = centred_enough(prior)
                 base["framing"] = framing
                 if not ok:
@@ -368,14 +373,28 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
             failed += 1
             continue
 
-        report, preview = b["report"], b["preview"]
+        # A lead refused before masking - bad framing, or no usable driveway
+        # prior - has no mask and so no preview to show. That is a rejection,
+        # not a missing field.
+        report = b.get("report")
+        preview = b.get("preview")
+
+        # No report at all means the ladder never produced one. Record it as a
+        # failure rather than raising - one unlucky lead must not take down the
+        # scan around it.
+        if report is None:
+            store.fail(lead["id"], "render", "no render attempt completed")
+            log(f"  [{lead['id']}] render produced no result")
+            failed += 1
+            continue
 
         if not report["passed"]:
             store.advance(lead["id"], "failed",
                           note="qc: " + "; ".join(report["reasons"]),
                           fail_stage="render",
                           fail_error=json.dumps(report["reasons"]),
-                          qc=report, mask_path=str(preview))
+                          qc=report,
+                          mask_path=str(preview) if preview else None)
             log(f"  [{lead['id']}] QC FAIL - {'; '.join(report['reasons'])}")
             failed += 1
             continue
@@ -386,7 +405,8 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
             store.advance(lead["id"], "failed",
                           note=f"qc: edited {sem.get('highlighted_object')}, not driveway",
                           fail_stage="render", fail_error="wrong region",
-                          qc=report, mask_path=str(preview))
+                          qc=report,
+                          mask_path=str(preview) if preview else None)
             log(f"  [{lead['id']}] QC FAIL - edited {sem.get('highlighted_object')}")
             failed += 1
             continue
