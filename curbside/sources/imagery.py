@@ -22,11 +22,14 @@ def fetch(lat, lon, out_path, meters=None, px=None, timeout=45, source=None,
     px = settings.image_px if px is None else px
     x, y = _mercator(lat, lon)
     h = meters / 2
-    q = urllib.parse.urlencode({
+    params = {
         "bbox": f"{x-h},{y-h},{x+h},{y+h}",
         "bboxSR": 3857, "imageSR": 3857,
         "size": f"{px},{px}", "format": "jpg", "f": "image",
-    })
+    }
+    # MapServer sources need layer selection; ImageServer sources reject it.
+    params.update(getattr(src, "extra_params", {}) or {})
+    q = urllib.parse.urlencode(params)
     # State GIS services return 500s and stall under load. A failed tile should
     # cost one lead, not the whole scan - so errors come back as a value.
     last = None

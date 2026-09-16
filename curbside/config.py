@@ -42,6 +42,10 @@ class ImagerySource:
     attribution: str
     resolution_in: float
     states: tuple
+    #: Extra query parameters this service needs. Miami-Dade is a MapServer
+    #: whose default export burns street labels and parcel lines into the
+    #: image; layer 29 is the raw raster.
+    extra_params: dict = field(default_factory=dict)
 
     @property
     def renderable(self):
@@ -83,6 +87,38 @@ SOURCES = {
         resolution_in=19.7,
         states=("NC",),
     ),
+    # --- South East Florida: the target market -------------------------
+    # Neither county grants commercial use explicitly; both publish warranty
+    # disclaimers only. Florida public-records law (Microdecisions v. Skinner,
+    # 889 So.2d 871) suggests agencies cannot assert copyright over public
+    # records, but that is a lawyer's call, not an assumption to build on.
+    # Broward is deliberately absent: its terms require prior written
+    # permission, and its endpoint blocks automated access (HTTP 403).
+    "miami_dade": ImagerySource(
+        key="miami_dade",
+        name="Miami-Dade County Imagery 2024",
+        # layers=show:29 is essential - the default export burns street labels,
+        # road centrelines and magenta parcel lines into the image.
+        service=("https://gisweb.miamidade.gov/arcgis/rest/services/MapCache/"
+                 "MDCImagery/MapServer/export"),
+        extra_params={"layers": "show:29", "transparent": "false"},
+        license="public records, no stated restriction",
+        attribution="Imagery: Miami-Dade County",
+        resolution_in=3.0,
+        states=("FL",),
+    ),
+    "palm_beach": ImagerySource(
+        key="palm_beach",
+        name="Palm Beach County Aerial 2026",
+        # The service name really is misspelled ("Aerialphotgraphy"). The
+        # correctly-spelled variant requires a token.
+        service=("https://gis.pbcgov.org/image/rest/services/"
+                 "Aerialphotgraphy_2026_WebMercator/ImageServer/exportImage"),
+        license="public records, no stated restriction",
+        attribution="Imagery: Palm Beach County",
+        resolution_in=6.0,
+        states=("FL",),
+    ),
 }
 
 DEFAULT_SOURCE = _env("CURBSIDE_SOURCE", "indiana")
@@ -95,8 +131,18 @@ class Settings:
     render_model: str = _env("CURBSIDE_RENDER_MODEL", "gemini-3.1-flash-image")
 
     # --- imagery ---
+    #: "aerial" uses state/county orthoimagery; "street" uses Google Street
+    #: View for a front-of-house shot. Street reads better on a postcard - the
+    #: recipient recognises their own front door - but Google's terms prohibit
+    #: their imagery in print advertising, so it is prototype-only.
+    view: str = _env("CURBSIDE_VIEW", "aerial")
     source: str = DEFAULT_SOURCE
     crop_meters: float = _env("CURBSIDE_CROP_METERS", 32.0, float)
+    #: Street View framing. 80 degrees fits a typical lot with its driveway;
+    #: a slight upward pitch keeps the roofline in frame without tilting the
+    #: driveway out of the bottom.
+    street_fov: int = _env("CURBSIDE_STREET_FOV", 80, int)
+    street_pitch: int = _env("CURBSIDE_STREET_PITCH", 8, int)
     image_px: int = _env("CURBSIDE_IMAGE_PX", 1024, int)
 
     # --- spend ---
@@ -105,6 +151,11 @@ class Settings:
 
     # --- QC thresholds ---
     mask_threshold: int = _env("CURBSIDE_MASK_THRESHOLD", 26, int)
+    #: Street-level renders shift foliage and lighting across the whole frame,
+    #: so a diff at the aerial threshold captures the garden along with the
+    #: driveway. Measured: 26 -> 16.6% mask (driveway + beds), 50 -> 2.7%
+    #: (driveway only).
+    mask_threshold_street: int = _env("CURBSIDE_MASK_THRESHOLD_STREET", 50, int)
     qc_drift_threshold: int = _env("CURBSIDE_QC_DRIFT", 18, int)
     # Drift is measured, reported, and then DISCARDED by compositing - the
     # postcard uses the original photo outside the mask regardless. So this
@@ -145,6 +196,21 @@ class Settings:
         if self.source not in SOURCES:
             raise ValueError(f"unknown source {self.source!r}; have {list(SOURCES)}")
         return SOURCES[self.source]
+
+    @property
+    def street_view(self):
+        return self.view == "street"
+
+    @property
+    def parcel_source(self):
+        """County parcel layer matching the active imagery source, if any.
+
+        Aiming a street-level camera needs the real property position. Google
+        answers RANGE_INTERPOLATED for a large share of addresses - an estimate
+        along the street that can sit over 100 m from the house.
+        """
+        from curbside.sources.parcels import SOURCES as PARCELS
+        return self.source if self.source in PARCELS else None
 
     @property
     def renderable_sources(self):
