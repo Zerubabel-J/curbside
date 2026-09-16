@@ -146,7 +146,7 @@ def build(before_path, after_path, address, out_path, *,
                   "Installed in about two days"),
           zoom=1.25, focus=None,
           attribution=None):
-    from curbside.compliance.policy import assert_disclosure, REQUIRED_DISCLOSURE
+    from curbside.compliance.policy import assert_disclosure, required_disclosure
     from curbside.config import settings
 
     # Attribution follows the imagery actually used - hardcoding it credits
@@ -162,7 +162,7 @@ def build(before_path, after_path, address, out_path, *,
 
     # Compliance is enforced here, at the point of composition - a piece that
     # cannot carry its disclosure is never produced in the first place.
-    disclosure = disclosure or REQUIRED_DISCLOSURE
+    disclosure = disclosure or required_disclosure()
     assert_disclosure(disclosure)
     if not return_address:
         raise ValueError("return_address is required on a mailable piece")

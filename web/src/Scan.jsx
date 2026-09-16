@@ -202,8 +202,8 @@ export default function Scan({ onDone, config }) {
               ))}
             </div>
             <p className="scope">
-              Indiana addresses only — that is where the public imagery is
-              3 inch/pixel, sharp enough to resolve a driveway.
+              Indiana addresses only for now. Each home is photographed from
+              the street, and the new driveway is rendered onto that photo.
             </p>
           </div>
         </div>

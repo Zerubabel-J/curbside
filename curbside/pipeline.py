@@ -259,9 +259,14 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
                      else settings.mask_threshold)
         mask, mask_meta = consensus_mask(lead["before_path"], raw, prior,
                                          threshold=threshold)
+        # A street-level driveway covers a predictable slice of the frame, so
+        # the size bound is tighter there than from above.
+        max_mask = (settings.qc_max_mask_frac_street if settings.street_view
+                    else 0.45)
         report = qc(lead["before_path"], raw, mask,
                     drift_threshold=threshold,
-                    max_outside_frac=settings.qc_max_outside_frac)
+                    max_outside_frac=settings.qc_max_outside_frac,
+                    max_mask_frac=max_mask)
         report["segmentation"] = seg_meta
         report["mask"] = mask_meta
         report["attempt"] = tag

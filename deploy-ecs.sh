@@ -42,6 +42,17 @@ echo "secret: ${SECRET_ARN}"
 # The Lob key is optional. Without it the container falls back to dry-run
 # mail, which is the safe default - a missing key must never mean "send
 # anyway", and a half-configured mailer is worse than an obviously absent one.
+SV_SECRET_ARN=""
+if [ -n "${GOOGLE_STREETVIEW_API_KEY:-}" ]; then
+  SV_SECRET_ARN=$(aws secretsmanager create-secret --name "${NAME}/streetview" \
+    --secret-string "$GOOGLE_STREETVIEW_API_KEY" --region "$REGION" \
+    --query ARN --output text 2>/dev/null \
+    || aws secretsmanager update-secret --secret-id "${NAME}/streetview" \
+         --secret-string "$GOOGLE_STREETVIEW_API_KEY" --region "$REGION" \
+         --query ARN --output text)
+  echo "street view secret: ${SV_SECRET_ARN}"
+fi
+
 LOB_SECRET_ARN=""
 if [ -n "${LOB_API_KEY:-}" ]; then
   case "$LOB_API_KEY" in
@@ -74,6 +85,7 @@ fi
 # Reading the secret is not covered by the managed policy.
 SECRET_RESOURCES="\"${SECRET_ARN}\""
 [ -n "$LOB_SECRET_ARN" ] && SECRET_RESOURCES="${SECRET_RESOURCES},\"${LOB_SECRET_ARN}\""
+[ -n "$SV_SECRET_ARN" ] && SECRET_RESOURCES="${SECRET_RESOURCES},\"${SV_SECRET_ARN}\""
 aws iam put-role-policy --role-name "$EXEC_ROLE" --policy-name read-secret \
   --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",
     \"Action\":[\"secretsmanager:GetSecretValue\"],\"Resource\":[${SECRET_RESOURCES}]}]}"
@@ -138,6 +150,17 @@ echo "load balancer ready"
 aws logs create-log-group --log-group-name "/ecs/${NAME}" --region "$REGION" >/dev/null 2>&1 || true
 
 # Mail provider follows the key: present means Lob (test), absent means dry run.
+# Street level is what the product is for - the driveway has to be rendered
+# onto the front of the house, not onto a roof. It needs the Google key, so
+# without one the deployment falls back to aerial rather than failing to image.
+if [ -n "$SV_SECRET_ARN" ]; then
+  VIEW="street"
+  SV_SECRET_JSON=", {\"name\": \"GOOGLE_STREETVIEW_API_KEY\", \"valueFrom\": \"${SV_SECRET_ARN}\"}"
+else
+  VIEW="aerial"
+  SV_SECRET_JSON=""
+fi
+
 if [ -n "$LOB_SECRET_ARN" ]; then
   MAIL_PROVIDER="lob"
   LOB_SECRET_JSON=", {\"name\": \"LOB_API_KEY\", \"valueFrom\": \"${LOB_SECRET_ARN}\"}"
@@ -169,6 +192,7 @@ cat > /tmp/taskdef.json <<JSON
       {"name": "CURBSIDE_FROM_CITY", "value": "Indianapolis"},
       {"name": "CURBSIDE_FROM_STATE", "value": "IN"},
       {"name": "CURBSIDE_FROM_ZIP", "value": "46202"},
+      {"name": "CURBSIDE_VIEW", "value": "${VIEW}"},
       {"name": "CURBSIDE_MAIL_PROVIDER", "value": "${MAIL_PROVIDER}"},
       {"name": "LOB_FROM_NAME", "value": "Heartland Driveway Co."},
       {"name": "LOB_FROM_LINE1", "value": "1400 N Meridian St"},
@@ -176,7 +200,7 @@ cat > /tmp/taskdef.json <<JSON
       {"name": "LOB_FROM_STATE", "value": "IN"},
       {"name": "LOB_FROM_ZIP", "value": "46202"}
     ],
-    "secrets": [{"name": "GEMINI_API_KEY", "valueFrom": "${SECRET_ARN}"}${LOB_SECRET_JSON}],
+    "secrets": [{"name": "GEMINI_API_KEY", "valueFrom": "${SECRET_ARN}"}${LOB_SECRET_JSON}${SV_SECRET_JSON}],
     "logConfiguration": {
       "logDriver": "awslogs",
       "options": {

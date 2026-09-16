@@ -31,6 +31,25 @@ import time
 
 # Disclosure that must appear on the mailed piece. Wording is deliberately
 # plain: a reader should not have to infer that the image was altered.
+def required_disclosure(view=None):
+    """Disclosure wording for the view the photograph actually came from.
+
+    The text describes the source image to the recipient, so it has to match
+    it. Calling a street-level photograph "aerial" is a misstatement in the
+    one sentence on the piece whose purpose is to be accurate.
+    """
+    from curbside.config import settings
+    view = view or settings.view
+    source = ("photograph of the front of this property"
+              if view == "street" else
+              "aerial photograph of this address")
+    return ("Illustration only. The 'after' image is a computer-generated "
+            f"rendering of a public {source} and does not depict actual "
+            "work performed.")
+
+
+#: Aerial wording, kept as the module-level default for callers that predate
+#: the street/aerial split.
 REQUIRED_DISCLOSURE = (
     "Illustration only. The 'after' image is a computer-generated rendering "
     "of a public aerial photograph of this address and does not depict actual "

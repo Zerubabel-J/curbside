@@ -112,6 +112,10 @@ def config():
                 "resolution_in": s.resolution_in, "states": list(s.states)}
             for k, s in SOURCES.items()
         },
+        # Which way the camera points. Aerial renders the driveway onto a
+        # roof shot; street level renders it onto the front of the house,
+        # which is what the piece is selling.
+        "view": settings.view,
         "supports_sale_date": _supports_sale_date(),
         "renderable": settings.imagery().renderable,
         "budget_usd": settings.budget_usd,
@@ -122,6 +126,7 @@ def config():
             "gemini_key": bool(os.environ.get("GEMINI_API_KEY")),
             "return_address": _return_address(),
             "lob_key": bool(os.environ.get("LOB_API_KEY")),
+            "streetview_key": bool(os.environ.get("GOOGLE_STREETVIEW_API_KEY")),
             "live_mail_enabled": os.environ.get("CURBSIDE_ALLOW_LIVE_MAIL") == "1",
         },
         "required_suppression_sources": list(policy.REQUIRED_SUPPRESSION_SOURCES),
@@ -428,7 +433,8 @@ def _run_scan(job_id, req: ScanRequest):
                + (f", {resumed} resumed" if resumed else ""))
         job["lead_ids"] = ids
 
-        running("Fetching aerial imagery")
+        running("Fetching street view photos" if settings.street_view
+                else "Fetching aerial imagery")
         r = pipeline.image(s, log=lambda *_: None, only=ids)
         finish(f"{r['imaged']} imaged")
         imaged = r["imaged"]

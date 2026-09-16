@@ -60,3 +60,30 @@ def test_live_campaign_requires_full_suppression_coverage():
     assert preflight_campaign(provider=Live(),
                               suppression_sources=REQUIRED_SUPPRESSION_SOURCES,
                               from_address=full)
+
+
+def test_disclosure_describes_the_view_it_was_rendered_from(monkeypatch):
+    """The disclosure's whole job is to tell the recipient what they are
+    looking at. Calling a street-level photograph "aerial" is a misstatement
+    in the one sentence on the piece that exists to be accurate."""
+    from curbside.compliance.policy import required_disclosure, assert_disclosure
+    from curbside.config import settings
+
+    monkeypatch.setattr(settings, "view", "street")
+    street = required_disclosure()
+    assert "aerial" not in street.lower()
+    assert "front of this property" in street
+    assert_disclosure(street)
+
+    monkeypatch.setattr(settings, "view", "aerial")
+    aerial = required_disclosure()
+    assert "aerial photograph" in aerial
+    assert_disclosure(aerial)
+
+
+def test_street_masks_are_bounded_tighter_than_aerial():
+    """When the segmentation prior is discarded the mask falls back to raw
+    pixel difference, which can swallow a tree the model re-lit. Such a mask
+    drifts nowhere and is well-formed - only its size gives it away."""
+    from curbside.config import settings
+    assert settings.qc_max_mask_frac_street < 0.45

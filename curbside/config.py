@@ -165,6 +165,10 @@ class Settings:
     # On a narrow urban lot the driveway genuinely is a large share of the
     # frame. Above ~70% the model has repainted the scene, not the driveway.
     qc_max_mask_frac: float = _env("CURBSIDE_QC_MAX_MASK", 0.70, float)
+    #: Upper bound on mask size at street level. A driveway shot from the kerb
+    #: occupies a predictable slice of the frame; much more than this means the
+    #: diff has spread into the lawn or a tree the model re-lit.
+    qc_max_mask_frac_street: float = _env("CURBSIDE_QC_MAX_MASK_STREET", 0.18, float)
 
     # --- concurrency ---
     # Per-lead work is network-bound (segment, render, QC), so a handful of

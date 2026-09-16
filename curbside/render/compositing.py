@@ -108,11 +108,18 @@ def composite(before_path, after_path, mask, out_path):
     return out_path
 
 
-def qc(before_path, after_path, mask, drift_threshold=18, max_outside_frac=0.06):
+def qc(before_path, after_path, mask, drift_threshold=18, max_outside_frac=0.06,
+       max_mask_frac=0.45, min_mask_frac=0.008):
     """Did the model respect the boundary?
 
     Returns a dict; `passed` is False when the model rewrote too much of the
     scene outside the driveway region.
+
+    `max_mask_frac` is the upper bound on how much of the frame the change may
+    cover. It is a shape check, not a boundary check: when the segmentation
+    prior is discarded the mask falls back to raw pixel difference, which can
+    swallow a tree whose foliage the model re-lit. Such a mask is well-formed
+    and drifts nowhere - only its size gives it away.
     """
     a, size = _arr(before_path)
     b, _    = _arr(after_path)
@@ -131,13 +138,13 @@ def qc(before_path, after_path, mask, drift_threshold=18, max_outside_frac=0.06)
     mean_outside  = float(diff[outside].mean()) if outside.any() else 0.0
     mean_inside   = float(diff[inside].mean()) if inside.any() else 0.0
 
-    passed = (mask_frac >= 0.008 and mask_frac <= 0.45
+    passed = (mask_frac >= min_mask_frac and mask_frac <= max_mask_frac
               and outside_frac <= max_outside_frac)
 
     reasons = []
-    if mask_frac < 0.008:
+    if mask_frac < min_mask_frac:
         reasons.append(f"changed region too small ({mask_frac:.1%})")
-    if mask_frac > 0.45:
+    if mask_frac > max_mask_frac:
         reasons.append(f"changed region too large ({mask_frac:.1%})")
     if outside_frac > max_outside_frac:
         reasons.append(f"drift outside mask ({outside_frac:.1%})")
