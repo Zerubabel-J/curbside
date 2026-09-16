@@ -39,6 +39,26 @@ SECRET_ARN=$(aws secretsmanager create-secret --name "${NAME}/gemini" \
        --query ARN --output text)
 echo "secret: ${SECRET_ARN}"
 
+# The Lob key is optional. Without it the container falls back to dry-run
+# mail, which is the safe default - a missing key must never mean "send
+# anyway", and a half-configured mailer is worse than an obviously absent one.
+LOB_SECRET_ARN=""
+if [ -n "${LOB_API_KEY:-}" ]; then
+  case "$LOB_API_KEY" in
+    live_*)
+      echo "refusing to deploy a LIVE Lob key: this would let the public URL" >&2
+      echo "mail real people. Use a test_* key." >&2
+      exit 1 ;;
+  esac
+  LOB_SECRET_ARN=$(aws secretsmanager create-secret --name "${NAME}/lob" \
+    --secret-string "$LOB_API_KEY" --region "$REGION" \
+    --query ARN --output text 2>/dev/null \
+    || aws secretsmanager update-secret --secret-id "${NAME}/lob" \
+         --secret-string "$LOB_API_KEY" --region "$REGION" \
+         --query ARN --output text)
+  echo "lob secret: ${LOB_SECRET_ARN}"
+fi
+
 # --- 3. roles ------------------------------------------------------------
 # Two roles: the execution role lets ECS pull the image and read the secret at
 # launch; the task role is what the running container itself would use.
@@ -52,9 +72,11 @@ if ! aws iam get-role --role-name "$EXEC_ROLE" >/dev/null 2>&1; then
   ROLE_CREATED=1
 fi
 # Reading the secret is not covered by the managed policy.
+SECRET_RESOURCES="\"${SECRET_ARN}\""
+[ -n "$LOB_SECRET_ARN" ] && SECRET_RESOURCES="${SECRET_RESOURCES},\"${LOB_SECRET_ARN}\""
 aws iam put-role-policy --role-name "$EXEC_ROLE" --policy-name read-secret \
   --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",
-    \"Action\":[\"secretsmanager:GetSecretValue\"],\"Resource\":\"${SECRET_ARN}\"}]}"
+    \"Action\":[\"secretsmanager:GetSecretValue\"],\"Resource\":[${SECRET_RESOURCES}]}]}"
 EXEC_ARN="arn:aws:iam::${ACCOUNT}:role/${EXEC_ROLE}"
 # IAM is eventually consistent; a fresh role is not usable immediately.
 [ "${ROLE_CREATED:-0}" = "1" ] && { echo "waiting for IAM to propagate…"; sleep 15; }
@@ -115,6 +137,15 @@ echo "load balancer ready"
 # --- 6. task definition --------------------------------------------------
 aws logs create-log-group --log-group-name "/ecs/${NAME}" --region "$REGION" >/dev/null 2>&1 || true
 
+# Mail provider follows the key: present means Lob (test), absent means dry run.
+if [ -n "$LOB_SECRET_ARN" ]; then
+  MAIL_PROVIDER="lob"
+  LOB_SECRET_JSON=", {\"name\": \"LOB_API_KEY\", \"valueFrom\": \"${LOB_SECRET_ARN}\"}"
+else
+  MAIL_PROVIDER="dryrun"
+  LOB_SECRET_JSON=""
+fi
+
 cat > /tmp/taskdef.json <<JSON
 {
   "family": "${NAME}",
@@ -137,9 +168,15 @@ cat > /tmp/taskdef.json <<JSON
       {"name": "CURBSIDE_FROM_LINE1", "value": "1400 N Meridian St"},
       {"name": "CURBSIDE_FROM_CITY", "value": "Indianapolis"},
       {"name": "CURBSIDE_FROM_STATE", "value": "IN"},
-      {"name": "CURBSIDE_FROM_ZIP", "value": "46202"}
+      {"name": "CURBSIDE_FROM_ZIP", "value": "46202"},
+      {"name": "CURBSIDE_MAIL_PROVIDER", "value": "${MAIL_PROVIDER}"},
+      {"name": "LOB_FROM_NAME", "value": "Heartland Driveway Co."},
+      {"name": "LOB_FROM_LINE1", "value": "1400 N Meridian St"},
+      {"name": "LOB_FROM_CITY", "value": "Indianapolis"},
+      {"name": "LOB_FROM_STATE", "value": "IN"},
+      {"name": "LOB_FROM_ZIP", "value": "46202"}
     ],
-    "secrets": [{"name": "GEMINI_API_KEY", "valueFrom": "${SECRET_ARN}"}],
+    "secrets": [{"name": "GEMINI_API_KEY", "valueFrom": "${SECRET_ARN}"}${LOB_SECRET_JSON}],
     "logConfiguration": {
       "logDriver": "awslogs",
       "options": {
