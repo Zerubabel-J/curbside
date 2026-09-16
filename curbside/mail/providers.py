@@ -200,8 +200,18 @@ class LobProvider(MailProvider):
                       {"address": "185 Berry St, San Francisco, CA 94107"})
         return True
 
+    #: Lob's sandbox does not run CASS. Every real address returns
+    #: "undeliverable" on a test key, with the payload itself telling you to
+    #: send these values instead. Without the substitution the deliverability
+    #: gate blocks every piece and the mail path cannot be exercised at all.
+    TEST_SIMULATION = {"primary_line": "deliverable", "zip_code": "11111"}
+
     def verify(self, address):
-        d = self._request("/us_verifications", {"address": address})
+        if self.test_mode:
+            d = self._request("/us_verifications", dict(self.TEST_SIMULATION))
+            d["simulated"] = True
+        else:
+            d = self._request("/us_verifications", {"address": address})
         deliverability = d.get("deliverability")
         line1 = d.get("primary_line", "")
         line2 = d.get("last_line", "")
@@ -212,6 +222,10 @@ class LobProvider(MailProvider):
             "provider": self.name,
             "raw_deliverability": deliverability,
             "components": d.get("components", {}),
+            # True when Lob's sandbox answered for a stand-in address rather
+            # than the one asked about, so a receipt cannot be read as
+            # evidence that this address is real.
+            "simulated": bool(d.get("simulated")),
         }
 
     def send(self, lead, postcard_path, back_path=None, **kw):
@@ -237,6 +251,10 @@ class LobProvider(MailProvider):
         payload = {
             "description": f"curbside lead {lead['id']}",
             "size": POSTCARD_SIZE,
+            # Required by Lob, and not a free choice: these are unsolicited
+            # advertisements, not transactional mail. Declaring "operational"
+            # would misrepresent the piece to the carrier.
+            "use_type": "marketing",
             "to[name]": to["name"],
             "to[address_line1]": to["address_line1"],
             "to[address_city]": to["address_city"],
@@ -253,10 +271,18 @@ class LobProvider(MailProvider):
             files["back"] = ("back.jpg",
                              pathlib.Path(back_path).read_bytes(), "image/jpeg")
         else:
-            payload["back"] = ("<html><body style='font-family:sans-serif;padding:2rem'>"
-                               "<p>Mailed by " + self.from_address["name"] + ".</p>"
-                               "<p>To stop receiving these, reply to the address above.</p>"
-                               "</body></html>")
+            # Lob prints the recipient block, barcode, return address and
+            # postage into the lower-right of the back itself. Anything we
+            # draw there is overprinted, so our copy stays top-left and small.
+            name = self.from_address["name"].rstrip(".")
+            payload["back"] = (
+                "<html><body style=\"font-family:Helvetica,Arial,sans-serif;"
+                "margin:0;padding:0.30in 0.30in 0 0.30in;color:#3c4049\">"
+                f"<p style=\"font-size:9pt;margin:0 0 0.10in 0\">Mailed by {name}.</p>"
+                "<p style=\"font-size:8pt;margin:0;color:#6c7583;max-width:2.6in\">"
+                "To stop receiving these, write to the return address shown on "
+                "this card.</p>"
+                "</body></html>")
 
         d = self._request("/postcards", payload=payload, files=files)
         return {"id": d.get("id"), "cost": self.cost_per_piece,

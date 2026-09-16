@@ -73,3 +73,83 @@ def test_suppression_matches_across_punctuation(tmp_path):
 
 def test_missing_suppression_file_is_empty_not_error(tmp_path):
     assert load_suppression(tmp_path / "nope.txt") == set()
+
+
+# ------------------------------------------------- Lob API requirements
+#
+# Both of these were found by sending a real piece through Lob's sandbox, not
+# by reading the docs. They fail the request outright, so they are worth
+# pinning even though no unit test can reach Lob.
+
+def test_send_declares_a_use_type(monkeypatch, tmp_path):
+    """Lob rejects a postcard with no use_type (HTTP 422). These are
+    unsolicited advertisements, so "marketing" is the only honest value -
+    "operational" would misrepresent the piece to the carrier."""
+    from curbside.mail import providers
+
+    monkeypatch.setenv("LOB_API_KEY", "test_x")
+    for k, v in (("NAME", "Co"), ("LINE1", "1 Main St"), ("CITY", "Indianapolis"),
+                 ("STATE", "IN"), ("ZIP", "46201")):
+        monkeypatch.setenv(f"LOB_FROM_{k}", v)
+
+    p = providers.get_provider("lob")
+    sent = {}
+
+    def fake_request(path, payload=None, method="POST", files=None):
+        if path == "/us_verifications":
+            return {"deliverability": "deliverable", "primary_line": "1 A St",
+                    "last_line": "INDIANAPOLIS IN 46201", "components": {}}
+        sent.update(payload or {})
+        return {"id": "psc_test", "url": "https://example/x.pdf"}
+
+    monkeypatch.setattr(p, "_request", fake_request)
+    card = tmp_path / "front.jpg"
+    card.write_bytes(b"x" * 100)
+    p.send({"id": 1, "address": "1 A St, Indianapolis, IN 46201"}, card)
+
+    assert sent["use_type"] == "marketing"
+    assert sent["size"] == providers.POSTCARD_SIZE
+
+
+def test_test_mode_verification_is_flagged_as_simulated(monkeypatch):
+    """Lob's sandbox does not run CASS - every real address comes back
+    undeliverable. We substitute Lob's documented stand-in so the mail path is
+    exercisable, and flag it so a test receipt is never mistaken for evidence
+    that the address is real."""
+    from curbside.mail import providers
+
+    monkeypatch.setenv("LOB_API_KEY", "test_x")
+    p = providers.get_provider("lob")
+    asked = {}
+
+    def fake_request(path, payload=None, **kw):
+        asked.update(payload or {})
+        return {"deliverability": "deliverable", "primary_line": "1 TELEGRAPH HILL BLVD",
+                "last_line": "SAN FRANCISCO CA 94133", "components": {}}
+
+    monkeypatch.setattr(p, "_request", fake_request)
+    v = p.verify("8730 SW 34th St, Miami, FL 33165")
+
+    assert v["deliverable"] is True
+    assert v["simulated"] is True, "a sandbox answer must never look real"
+    assert asked == providers.LobProvider.TEST_SIMULATION
+
+
+def test_live_mode_verifies_the_real_address(monkeypatch):
+    """The substitution is a sandbox affordance and must not leak into live."""
+    from curbside.mail import providers
+
+    monkeypatch.setenv("LOB_API_KEY", "live_x")
+    p = providers.get_provider("lob")
+    asked = {}
+
+    def fake_request(path, payload=None, **kw):
+        asked.update(payload or {})
+        return {"deliverability": "deliverable", "primary_line": "", "last_line": "",
+                "components": {}}
+
+    monkeypatch.setattr(p, "_request", fake_request)
+    v = p.verify("8730 SW 34th St, Miami, FL 33165")
+
+    assert asked == {"address": "8730 SW 34th St, Miami, FL 33165"}
+    assert v["simulated"] is False
