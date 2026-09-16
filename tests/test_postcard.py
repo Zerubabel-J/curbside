@@ -158,3 +158,17 @@ def test_street_view_cards_credit_google_not_the_county(images, tmp_path, monkey
           return_address=RA)
     assert settings.imagery().attribution in drawn
     assert ATTRIBUTION not in drawn
+
+
+def test_a_real_font_is_available():
+    """The builder falls back to PIL's bitmap default when DejaVu is missing.
+    Nothing raises - the card renders, tests pass, and the headline comes out
+    unreadably small. That failed silently in the container until a printed
+    proof was inspected, so the font's presence is asserted directly."""
+    from curbside.compose import postcard
+    from PIL import ImageFont
+
+    f = postcard._font(int(0.175 * postcard.DPI), True)
+    assert isinstance(f, ImageFont.FreeTypeFont), (
+        "no scalable font found; install fonts-dejavu-core")
+    assert f.size == int(0.175 * postcard.DPI)
