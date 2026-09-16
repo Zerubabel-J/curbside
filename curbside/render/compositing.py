@@ -37,6 +37,9 @@ def derive_mask(before_path, after_path, threshold=26, min_blob_frac=0.004,
     a, size = _arr(before_path)
     b, _    = _arr(after_path)
     if a.shape != b.shape:
+        # Downscale the render to the source size. Comparing at the original
+        # resolution measures what the model actually changed rather than
+        # resampling noise, which otherwise inflates the mask.
         b_img = Image.open(os.fspath(after_path)).convert("RGB").resize(size, Image.LANCZOS)
         b = np.asarray(b_img).astype(np.int16)
 
@@ -214,6 +217,62 @@ def verify_region(before_path, mask_preview_path, key, model=None):
             result["highlighted_object"] = "road"
             result["note"] = ("looks like the public street: "
                               + ", ".join(reasons))
+    return result, err, cost
+
+
+def verify_region_street(before_path, mask_preview_path, key, model=None):
+    """Semantic QC for street-level views.
+
+    The aerial checks invert here. Looking down, a band spanning the frame with
+    two cars on it is the public road; from the kerb a driveway legitimately
+    runs toward the camera and often has a car on it. What distinguishes them
+    from this angle is orientation and termination: a driveway recedes toward
+    the house and ends at it, while the road runs left-to-right across the
+    foreground and leaves the frame at both sides.
+    """
+    from curbside.vision import gemini
+    SCHEMA = {
+        "type": "object",
+        "properties": {
+            "highlighted_object": {"type": "string",
+                "enum": ["driveway", "road", "footpath", "lawn", "roof",
+                         "parking_lot", "building", "other"]},
+            "recedes_toward_house": {"type": "boolean",
+                "description": "does it run away from the camera toward the building"},
+            "exits_frame_both_sides": {"type": "boolean",
+                "description": "does it run left to right and leave the frame at both edges"},
+            "is_driveway": {"type": "boolean"},
+            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+            "note": {"type": "string"},
+        },
+        "required": ["highlighted_object", "recedes_toward_house",
+                     "exits_frame_both_sides", "is_driveway", "confidence", "note"],
+    }
+    PROMPT = (
+        "A red translucent overlay marks one region of this street-level "
+        "photograph of a house. Identify what real-world surface lies under "
+        "it.\n\n"
+        "A DRIVEWAY is the private paved strip connecting the house or garage "
+        "to the road. From this angle it RECEDES away from the camera, growing "
+        "narrower toward the house, and it ENDS at the property.\n\n"
+        "The ROAD is the public street, usually across the foreground. It runs "
+        "left to right and leaves the frame at BOTH sides. The FOOTPATH also "
+        "crosses left to right, between the road and the garden.\n\n"
+        "Answer the two structural questions honestly first, then decide."
+    )
+    result, err, cost = gemini.ask_json(mask_preview_path, PROMPT, SCHEMA,
+                                        key, model=model)
+    if err or not result:
+        return result, err, cost
+
+    # A surface that crosses the frame and does not recede toward the house is
+    # the road or the footpath, whatever the model called it.
+    if result.get("is_driveway"):
+        if result.get("exits_frame_both_sides") and not result.get("recedes_toward_house"):
+            result["is_driveway"] = False
+            result["highlighted_object"] = "road"
+            result["note"] = ("crosses the frame without receding toward the "
+                              "house - reads as the road or footpath")
     return result, err, cost
 
 

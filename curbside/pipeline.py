@@ -9,7 +9,8 @@ from curbside.store import Store
 from curbside.sources.geocode import geocode
 from curbside.sources.imagery import fetch
 from curbside.vision import gemini
-from curbside.render.compositing import composite, qc, save_mask_preview, verify_region
+from curbside.render.compositing import (composite, qc, save_mask_preview,
+                                         verify_region, verify_region_street)
 from curbside.render.segmentation import segment, consensus_mask
 from curbside.compose.postcard import build as build_postcard, focus_from_mask
 from curbside.compliance import policy
@@ -100,6 +101,17 @@ def discover_sales(store, source_key, suppression, months=18, limit=100,
 
 
 def image(store, limit=None, log=print, only=None):
+    """Fetch one photograph per lead.
+
+    Two modes. Aerial looks straight down from state or county orthoimagery,
+    and needs coordinates. Street View photographs the front of the house from
+    the road, and resolves its own position from the address - it aims the
+    camera by bearing, so the target coordinate has to be the real property
+    rather than a point estimated along the street.
+    """
+    if settings.street_view:
+        return _image_street(store, limit, log, only)
+
     done = failed = 0
     for lead in _scoped(store, "discovered", limit, only):
         # Sales records arrive pre-geocoded; only geocode when we must.
@@ -129,6 +141,37 @@ def image(store, limit=None, log=print, only=None):
     return {"imaged": done, "failed": failed}
 
 
+def _image_street(store, limit, log, only):
+    """Street View variant of the image stage."""
+    from curbside.sources import streetview
+
+    done = failed = 0
+    for lead in _scoped(store, "discovered", limit, only):
+        path = settings.images_dir / f"{lead['id']:06d}_before.jpg"
+        try:
+            ok, msg = streetview.fetch(
+                lead["address"], path,
+                parcel_source=settings.parcel_source,
+                fov=settings.street_fov, pitch=settings.street_pitch)
+        except Exception as e:
+            ok, msg = False, f"{type(e).__name__}: {e}"
+
+        if not ok:
+            store.fail(lead["id"], "imagery", str(msg))
+            log(f"  [{lead['id']}] street view failed: {str(msg)[:70]}")
+            failed += 1
+            continue
+
+        store.advance(lead["id"], "imaged",
+                      lat=msg.get("lat"), lon=msg.get("lon"),
+                      precision=msg["geocode_precision"],
+                      before_path=str(path))
+        log(f"  [{lead['id']}] imaged ({msg['geocode_precision']}, "
+            f"{msg['camera_distance_m']}m, {msg.get('captured','?')})")
+        done += 1
+    return {"imaged": done, "failed": failed}
+
+
 def qualify(store, key, budget, limit=None, log=print, workers=None, only=None):
     """Qualify leads, several at a time.
 
@@ -142,9 +185,11 @@ def qualify(store, key, budget, limit=None, log=print, workers=None, only=None):
     workers = workers or settings.workers
     budget.check(0.001 * len(leads))
 
+    prompt = gemini.STREET_QUALIFY_PROMPT if settings.street_view else None
+
     def call(lead):
         return lead, gemini.qualify(lead["before_path"], key,
-                                    model=settings.qualify_model)
+                                    model=settings.qualify_model, prompt=prompt)
 
     results = []
     if workers > 1 and len(leads) > 1:
@@ -208,10 +253,14 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
             out["error"] = ("render", msg)
             return out, False
 
+        # Street-level renders shift foliage and lighting across the frame, so
+        # the aerial threshold captures the garden along with the driveway.
+        threshold = (settings.mask_threshold_street if settings.street_view
+                     else settings.mask_threshold)
         mask, mask_meta = consensus_mask(lead["before_path"], raw, prior,
-                                         threshold=settings.mask_threshold)
+                                         threshold=threshold)
         report = qc(lead["before_path"], raw, mask,
-                    drift_threshold=settings.qc_drift_threshold,
+                    drift_threshold=threshold,
                     max_outside_frac=settings.qc_max_outside_frac)
         report["segmentation"] = seg_meta
         report["mask"] = mask_meta
@@ -224,7 +273,8 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
         if not report["passed"]:
             return out, False
 
-        sem, sem_err, sem_cost = verify_region(lead["before_path"], preview, key)
+        check = verify_region_street if settings.street_view else verify_region
+        sem, sem_err, sem_cost = check(lead["before_path"], preview, key)
         out["costs"].append(("qc", sem_cost, settings.qualify_model))
         report["semantic"] = sem if not sem_err else {"error": sem_err}
         out["semantic"] = (sem, sem_err)
@@ -242,8 +292,10 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
             if seg_meta.get("cost"):
                 base["costs"].append(("segment", seg_meta["cost"], settings.qualify_model))
 
+            ladder = (gemini.STREET_RENDER_LADDER if settings.street_view
+                      else gemini.RENDER_LADDER)
             last = None
-            for tag, prompt in gemini.RENDER_LADDER[:settings.render_attempts]:
+            for tag, prompt in ladder[:settings.render_attempts]:
                 out, passed = attempt(lead, prior, seg_meta, prompt, tag)
                 base["costs"].extend(out.pop("costs", []))
                 last = {**base, **out}

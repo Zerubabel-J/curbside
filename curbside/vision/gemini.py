@@ -188,11 +188,61 @@ def ask_json(img_path, prompt, schema, key, model=None):
         return None, f"unparseable: {t[:200]}", cost
 
 
-def qualify(img_path, key, model=QUALIFY_MODEL):
+STREET_QUALIFY_PROMPT = """This is a STREET-LEVEL photograph of a US property
+taken from the road. You are qualifying it for a DRIVEWAY UPGRADE direct-mail
+campaign - the offer is a premium paver driveway, so both worn driveways and
+plain-but-sound ones are valid candidates.
+
+The driveway is the paved strip running from the street toward the house or
+garage, receding away from the camera. It is NOT the road across the
+foreground, and NOT the footpath crossing left to right.
+
+REJECT when: no driveway is visible; the house is hidden behind trees, fences
+or hedges; the shot faces down the street rather than at a property; or it is
+not a single-family home.
+
+Score condition 1-10 where 1 is pristine and 10 badly broken. A low score
+still qualifies - the offer is an upgrade, not only a repair."""
+
+
+STREET_RENDER_LADDER = [
+    ("bold", """You are performing a LOCAL EDIT on a street-level photograph of
+a house. Almost all of this image must come back untouched.
+
+EDIT EXACTLY ONE THING: the driveway - the paved strip running from the street
+toward the house or garage, receding away from the camera. Replace its surface
+with terracotta and warm-red clay pavers in a herringbone pattern, edged by a
+charcoal border course.
+
+The paver pattern must follow the perspective of the original surface: rows
+converging toward the garage, larger in the foreground, smaller further away.
+
+DO NOT TOUCH ANYTHING ELSE. The house, its walls, roof, windows, garage door,
+the lawn, trees, fences, the public road in the foreground, the footpath, the
+sky, parked cars and every shadow must return exactly as they arrived. Do not
+extend paving onto the lawn, the footpath, or the road.
+
+Sanity check: the driveway is a modest part of this frame. If you have changed
+the house, the sky, or most of the image, you have made a mistake."""),
+
+    ("tight", """Make a small, careful edit to this street-level photograph.
+
+Resurface ONLY the driveway - the private paved strip leading from the road to
+the house or garage. Use warm terracotta pavers in a herringbone pattern
+following the existing perspective.
+
+Keep the edit tightly inside the driveway's current outline. It is better to
+change slightly too little than to spill onto the lawn, the footpath or the
+road. Everything else - house, sky, trees, vehicles, shadows - returns
+exactly as it arrived."""),
+]
+
+
+def qualify(img_path, key, model=QUALIFY_MODEL, prompt=None):
     b64 = base64.b64encode(pathlib.Path(img_path).read_bytes()).decode()
     resp, err = _post({
         "model": model,
-        "input": [{"type": "text", "text": QUALIFY_PROMPT},
+        "input": [{"type": "text", "text": prompt or QUALIFY_PROMPT},
                   {"type": "image", "mime_type": "image/jpeg", "data": b64}],
         "response_format": {"type": "text", "mime_type": "application/json",
                             "schema": QUALIFY_SCHEMA},
