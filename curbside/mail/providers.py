@@ -71,9 +71,18 @@ class MailProvider:
 # Dry run — the default
 # --------------------------------------------------------------------------
 
+# Postcard size, and the postage tier that follows from it. USPS charges
+# letter rate up to 4.25x6 in and flat rate above it; Lob's per-piece price
+# tracks that split (developer tier: $0.905 for 4x6, $1.026 for 6x9). The
+# artwork in compose/postcard.py is built to the same spec - submitting one
+# size and paying for another is rejected by the printer.
+POSTCARD_SIZE = "4x6"
+COST_PER_PIECE = 0.905
+
+
 class DryRunProvider(MailProvider):
     name = "dryrun"
-    cost_per_piece = 0.75
+    cost_per_piece = COST_PER_PIECE
     live = False
 
     def __init__(self, outbox=None, **kw):
@@ -126,7 +135,7 @@ class LobProvider(MailProvider):
       CURBSIDE_ALLOW_LIVE_MAIL=1   required for a live_* key to actually send
     """
     name = "lob"
-    cost_per_piece = 0.75
+    cost_per_piece = COST_PER_PIECE
     BASE = "https://api.lob.com/v1"
 
     def __init__(self, api_key=None, **kw):
@@ -227,7 +236,7 @@ class LobProvider(MailProvider):
         front = pathlib.Path(postcard_path).read_bytes()
         payload = {
             "description": f"curbside lead {lead['id']}",
-            "size": "6x9",
+            "size": POSTCARD_SIZE,
             "to[name]": to["name"],
             "to[address_line1]": to["address_line1"],
             "to[address_city]": to["address_city"],

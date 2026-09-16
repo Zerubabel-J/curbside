@@ -38,7 +38,7 @@ quality control that inspects each AI edit and rejects bad ones.*
 flowchart LR
     A["📍 Address"] --> B["🛰️ Aerial photo<br/>public domain"]
     B --> C{"🔍 Needs a<br/>driveway?"}
-    C -->|no| X["✕ Rejected<br/>$0.0009 saved a $0.75 mailing"]
+    C -->|no| X["✕ Rejected<br/>$0.0009 saved a $0.905 mailing"]
     C -->|yes| D["🎨 Render new<br/>paver driveway"]
     D --> E["🛡️ Mask + QC<br/>only the driveway changes"]
     E --> F["📬 Postcard<br/>300 DPI, compliant"]
@@ -320,9 +320,16 @@ tests, dry-run mail. Only the model calls bill.
 | Segment + render + semantic QC | ~$0.07 |
 | **A qualified lead, end to end** | **~$0.07** |
 | A six-home block scan | ~$0.20 |
+| Print + postage, per piece mailed | $0.905 |
 
 `CURBSIDE_BUDGET` is a hard ceiling checked before every paid call. It guards
 API spend only - modelled print-and-postage never consumes it.
+
+Print dominates the per-lead cost, and postcard size sets it. USPS charges
+letter rate up to 4.25x6 in and flat rate above; Lob's price follows the same
+split, $0.905 against $1.026 for 6x9. Pieces are built to Lob's 4x6 template
+(4.25x6.25 in with bleed) and `mail/providers.py` buys the matching postage -
+artwork at one size and postage at another is rejected by the printer.
 
 See **[docs/RUNNING.md](docs/RUNNING.md)** for troubleshooting.
 
@@ -416,7 +423,7 @@ curbside/
   render/
     segmentation.py     driveway priors, consensus masking
     compositing.py      masked merge, boundary + semantic QC
-  compose/postcard.py   300 DPI composition, mask-centred framing
+  compose/postcard.py   Lob 4x6 template, 300 DPI, mask-centred framing
   mail/providers.py     dry-run and Lob adapters
   compliance/policy.py  disclosure, state gating, campaign preflight
 
