@@ -474,6 +474,150 @@ def _run_scan(job_id, req: ScanRequest):
         s.close()
 
 
+class CampaignRequest(BaseModel):
+    """A market, not an address. The input a contractor actually has."""
+    zip_code: str
+    county: Optional[str] = None
+    min_price: int = 700_000
+    months: int = 6
+    #: Leads to take from the ZIP. Each one costs a render, so this is the
+    #: spend control as much as a page size.
+    limit: int = 20
+    render: bool = True
+
+
+def _run_campaign(job_id, req: CampaignRequest):
+    """ZIP -> recently-sold homes -> image -> qualify -> render -> postcard.
+
+    Same stages as a block scan; only the source of the addresses differs. A
+    block scan asks "who lives near this job site"; a campaign asks "who just
+    bought a house in this market", which is the question that predicts a
+    driveway budget.
+    """
+    from curbside.sources import sold
+    from curbside.store import Store
+
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    ra = _return_address()
+    job = _JOBS[job_id]
+    steps = []
+
+    def step(label, state="done", detail=""):
+        steps.append({"label": label, "state": state, "detail": detail})
+        job["steps"] = steps
+
+    def running(label):
+        steps.append({"label": label, "state": "running", "detail": ""})
+        job["steps"] = steps
+
+    def finish(detail=""):
+        if steps:
+            steps[-1]["state"] = "done"
+            steps[-1]["detail"] = detail
+        job["steps"] = steps
+
+    s = _store()
+    try:
+        settings.ensure_dirs()
+        budget = pipeline.Budget(s, settings.budget_usd)
+        supp = load_suppression(settings.suppression_file)
+
+        running(f"Searching county records for {req.zip_code}")
+        # Validate the market before the environment: a mistyped ZIP should
+        # report a mistyped ZIP, not whichever unrelated check ran first.
+        sold.validate(req.zip_code, req.county)
+        leads, errors = sold.search(req.zip_code, county=req.county,
+                                    min_price=req.min_price,
+                                    months=req.months, limit=req.limit)
+        if not leads:
+            raise RuntimeError(
+                f"no homes sold over ${req.min_price:,} in {req.zip_code} "
+                f"in the last {req.months} months"
+                + (f" ({'; '.join(errors)})" if errors else ""))
+        finish(f"{len(leads)} sold over ${req.min_price:,}")
+        job["county_errors"] = errors
+        job["market"] = {"zip": req.zip_code,
+                         "counties": sorted({l.county for l in leads}),
+                         "median_price": sorted(l.price for l in leads)[len(leads) // 2]}
+
+        running("Building the mailing list")
+        ids, suppressed = [], 0
+        for l in leads:
+            addr = l.as_address()
+            if is_suppressed(addr, supp):
+                suppressed += 1
+                continue
+            lead_id, created = s.add_lead(addr)
+            if created:
+                s.advance(lead_id, "discovered", lead_source="sold_list")
+            ids.append(lead_id)
+        finish(f"{len(ids)} to process"
+               + (f", {suppressed} suppressed" if suppressed else ""))
+        job["lead_ids"] = ids
+
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+        if not ra:
+            raise RuntimeError("return address not configured")
+
+        running("Fetching street view photos" if settings.street_view
+                else "Fetching aerial imagery")
+        r = pipeline.image(s, log=lambda *_: None, only=ids)
+        finish(f"{r['imaged']} imaged")
+        imaged = r["imaged"]
+
+        running(f"Analysing {imaged} driveways" if imaged else "Analysing driveways")
+        r = pipeline.qualify(s, key, budget, log=lambda *_: None, only=ids)
+        finish(f"{r['passed']} candidates, {r['rejected']} skipped"
+               if imaged else "nothing to analyse")
+
+        candidates = len([r for r in s.ready_for("qualified") if r["id"] in set(ids)])
+
+        if req.render and candidates:
+            running(f"Rendering {candidates} driveway"
+                    f"{'s' if candidates != 1 else ''} + quality checks")
+            r = pipeline.render(s, key, budget, log=lambda *_: None, only=ids)
+            finish(f"{r['rendered']} passed, {r['failed']} rejected by QC")
+
+            running("Laying out postcards")
+            r = pipeline.compose(s, ra, log=lambda *_: None, only=ids)
+            finish(f"{r['composed']} ready for review")
+        elif req.render:
+            step("Rendering driveways", "done", "no candidates")
+
+        job.update(status="completed", stage="done")
+    except Exception as e:
+        if steps:
+            steps[-1]["state"] = "error"
+            steps[-1]["detail"] = str(e)[:160]
+        job.update(status="failed",
+                   error=f"{type(e).__name__}: {e}"[:300], steps=steps)
+    finally:
+        s.close()
+
+
+@app.get("/markets", tags=["pipeline"])
+def markets():
+    """Counties whose records can be searched by ZIP."""
+    from curbside.sources import sold
+    return {
+        "counties": [{"key": k, "name": name} for k, (name, _) in sold.COUNTIES.items()],
+        "default_min_price": 700_000,
+        "default_months": 6,
+    }
+
+
+@app.post("/campaign", tags=["pipeline"])
+def start_campaign(req: CampaignRequest, background: BackgroundTasks):
+    """ZIP in, postcards out. The lead source a contractor actually uses."""
+    import uuid
+    job_id = uuid.uuid4().hex[:12]
+    _JOBS[job_id] = {"id": job_id, "status": "running", "stage": "searching",
+                     "zip_code": req.zip_code, "steps": [], "lead_ids": []}
+    background.add_task(_run_campaign, job_id, req)
+    return {"job_id": job_id, "status": "running"}
+
+
 @app.post("/scan", tags=["pipeline"])
 def start_scan(req: ScanRequest, background: BackgroundTasks):
     """Block scan: one address in, postcards out."""

@@ -186,3 +186,32 @@ def test_images_resolve_when_the_database_came_from_another_machine(client, tmp_
     r = client.get(f"/leads/{lid}/image/postcard")
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/jpeg"
+
+
+def test_markets_lists_searchable_counties(client):
+    d = client.get("/markets").json()
+    keys = {c["key"] for c in d["counties"]}
+    assert {"miami_dade", "palm_beach", "broward"} <= keys
+    assert d["default_min_price"] == 700_000
+
+
+def test_campaign_rejects_a_bad_zip_without_spending(client, monkeypatch):
+    """The ZIP is validated before any paid call. A typo should cost nothing."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    r = client.post("/campaign", json={"zip_code": "abc", "render": False})
+    assert r.status_code == 200
+    job = r.json()["job_id"]
+    status = client.get(f"/scan/{job}").json()
+    assert status["status"] == "failed"
+    assert "ZIP" in status["error"]
+
+
+def test_campaign_reports_progress_by_step(client, monkeypatch):
+    """A campaign can run for minutes. The UI needs named steps, not a
+    spinner, so a long render reads as progress rather than a stall."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    r = client.post("/campaign", json={"zip_code": "00000", "render": False})
+    job = r.json()["job_id"]
+    status = client.get(f"/scan/{job}").json()
+    assert status["steps"], "a campaign must report steps"
+    assert status["steps"][0]["label"].startswith("Searching county records")
