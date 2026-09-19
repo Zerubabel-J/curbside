@@ -224,6 +224,88 @@ Score condition 1-10 where 1 is pristine and 10 badly broken. A low score
 still qualifies - the offer is an upgrade, not only a repair."""
 
 
+#: Premium driveway surfaces, as a contractor would sell them. Every render
+#: used the same terracotta herringbone, so a block of postcards looked like a
+#: block of the same postcard - and one material cannot suit every house.
+#: Each entry is (key, description of the finished surface).
+MATERIALS = [
+    ("clay_pavers",
+     "warm terracotta and red-clay pavers laid in a herringbone pattern, "
+     "edged with a charcoal soldier-course border"),
+    ("travertine",
+     "large-format ivory and silver travertine pavers laid in a French "
+     "pattern, with fine sand-coloured joints and a matching border"),
+    ("exposed_aggregate",
+     "polished exposed-aggregate concrete in warm sandstone tones, with "
+     "crisp saw-cut control joints in a wide diamond pattern"),
+    ("charcoal_pavers",
+     "charcoal and graphite granite-look pavers in a running-bond pattern, "
+     "with a lighter silver border course"),
+    ("stamped_concrete",
+     "stamped concrete finished to look like tumbled ashlar slate in warm "
+     "grey and tan tones, with a darker border band"),
+]
+
+
+def material_for(seed, materials=None):
+    """Pick a surface deterministically from `seed` (a lead id).
+
+    Deterministic rather than random so a re-run of the same lead produces the
+    same card - a homeowner who receives two mailings should not see two
+    different driveways, and a retry should not silently change the offer.
+    """
+    materials = materials or MATERIALS
+    return materials[int(seed) % len(materials)]
+
+
+def street_render_ladder(material=None):
+    """Render prompts for one lead, in escalating conservatism.
+
+    `material` is the (key, description) pair the surface is rendered in. The
+    safety language is identical across materials - only the finish changes -
+    so varying the look cannot weaken the guarantee that nothing outside the
+    driveway is touched.
+    """
+    _, finish = material or MATERIALS[0]
+    return [
+        ("bold", f"""You are performing a LOCAL EDIT on a street-level photograph
+of a house. Almost all of this image must come back untouched.
+
+EDIT EXACTLY ONE THING: the driveway - the paved strip running from the street
+toward the house or garage, receding away from the camera. Replace its surface
+with {finish}.
+
+This is a premium installation photographed for a high-end contractor's
+brochure: the new surface is clean, evenly laid, richly textured and free of
+cracks, stains and patches. It should read as expensive.
+
+The pattern must follow the perspective of the original surface: courses
+converging toward the garage, larger in the foreground, smaller further away.
+Keep the original daylight, shadows and weather exactly as they are - the
+surface changes, the photograph does not.
+
+DO NOT TOUCH ANYTHING ELSE. The house, its walls, roof, windows, garage door,
+the lawn, trees, fences, the public road in the foreground, the footpath, the
+sky, parked cars and every shadow must return exactly as they arrived. Do not
+extend paving onto the lawn, the footpath, or the road.
+
+Sanity check: the driveway is a modest part of this frame. If you have changed
+the house, the sky, or most of the image, you have made a mistake."""),
+
+        ("tight", f"""Make a small, careful edit to this street-level photograph.
+
+Resurface ONLY the driveway - the private paved strip leading from the road to
+the house or garage - with {finish}. Make it look newly installed and
+well-maintained, following the existing perspective.
+
+Keep the edit tightly inside the driveway's current outline. It is better to
+change slightly too little than to spill onto the lawn, the footpath or the
+road. Everything else - house, sky, trees, vehicles, shadows - returns
+exactly as it arrived."""),
+    ]
+
+
+#: Default ladder, for callers that do not choose a material.
 STREET_RENDER_LADDER = [
     ("bold", """You are performing a LOCAL EDIT on a street-level photograph of
 a house. Almost all of this image must come back untouched.

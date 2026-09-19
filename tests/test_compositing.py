@@ -234,3 +234,36 @@ def test_street_masking_refuses_without_a_driveway_prior():
 
     strict, meta = consensus_mask(pa, pb, None, require_prior=True)
     assert strict is None and meta["mode"] == "refused"
+
+
+# ------------------------------------------------------- render variation
+
+def test_materials_vary_between_neighbouring_leads():
+    """A block of postcards that all show the same terracotta herringbone
+    reads as one postcard printed five times."""
+    from curbside.vision.gemini import material_for
+    keys = {material_for(i)[0] for i in range(1, 6)}
+    assert len(keys) == 5, "consecutive leads must not share a surface"
+
+
+def test_material_choice_is_stable_for_a_lead():
+    """A retry must not change the offer - a homeowner who receives two
+    mailings should not see two different driveways."""
+    from curbside.vision.gemini import material_for
+    assert material_for(7) == material_for(7)
+
+
+def test_every_material_keeps_the_boundary_language():
+    """Varying the finish must not weaken the instruction that nothing outside
+    the driveway may change - that guarantee is what makes the piece honest."""
+    from curbside.vision.gemini import MATERIALS, street_render_ladder
+    for m in MATERIALS:
+        ladder = street_render_ladder(m)
+        assert len(ladder) >= 2
+        for _, prompt in ladder:
+            low = prompt.lower()
+            assert "driveway" in low
+            assert "lawn" in low, f"{m[0]} lost the lawn exclusion"
+        bold = ladder[0][1].lower()
+        assert "do not touch anything else" in bold
+        assert m[1].split(",")[0].lower() in bold, "material must reach the prompt"

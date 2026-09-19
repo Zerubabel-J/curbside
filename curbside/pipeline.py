@@ -14,6 +14,7 @@ from curbside.render.compositing import (composite, qc, save_mask_preview,
 from curbside.render.segmentation import (segment, consensus_mask,
                                         centred_enough)
 from curbside.compose.postcard import build as build_postcard, focus_from_mask
+from curbside.compose import templates
 from curbside.compliance import policy
 from curbside.mail.providers import (get_provider, load_suppression,
                                      is_suppressed, MailError, UndeliverableError)
@@ -340,8 +341,15 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
                                       "reasons": [framing["reason"]]}
                     return base
 
-            ladder = (gemini.STREET_RENDER_LADDER if settings.street_view
-                      else gemini.RENDER_LADDER)
+            # Vary the surface per lead so a block of postcards does not look
+            # like one postcard five times, and so the material suits the
+            # house. Keyed on the lead id, so a retry keeps the same offer.
+            if settings.street_view:
+                material = gemini.material_for(lead["id"])
+                base["material"] = material[0]
+                ladder = gemini.street_render_ladder(material)
+            else:
+                ladder = gemini.RENDER_LADDER
             last = None
             for tag, prompt in ladder[:settings.render_attempts]:
                 out, passed = attempt(lead, prior, seg_meta, prompt, tag)
@@ -413,6 +421,8 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
 
         final = settings.output_dir / f"{lead['id']:06d}_after.jpg"
         composite(lead["before_path"], b["raw"], b["mask"], final)
+        if b.get("material"):
+            report["material"] = b["material"]
         store.advance(lead["id"], "rendered", after_path=str(final),
                       mask_path=str(preview), qc=report)
         log(f"  [{lead['id']}] rendered  mask={report['mask_frac']:.1%} "
@@ -434,7 +444,8 @@ def compose(store, return_address, limit=None, log=print, only=None):
         try:
             build_postcard(lead["before_path"], lead["after_path"],
                            lead["address"], card,
-                           return_address=return_address, focus=focus)
+                           return_address=return_address, focus=focus,
+                           **templates.get(settings.template))
         except Exception as e:
             store.fail(lead["id"], "compose", str(e))
             log(f"  [{lead['id']}] compose failed: {e}")
