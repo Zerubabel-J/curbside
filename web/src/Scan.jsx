@@ -26,7 +26,44 @@ function StepRow({ step, elapsed }) {
   )
 }
 
-function ResultCard({ lead, onSend, busy }) {
+function PostcardModal({ lead, onClose }) {
+  // Opening the postcard in a new tab leaves the app behind with no way back -
+  // the browser's own back button is the only exit, and on a fresh tab there
+  // is nothing to go back to. Keeping it in an overlay keeps the scan results
+  // underneath it.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+    }
+  }, [onClose])
+
+  if (!lead) return null
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <strong>{lead.address}</strong>
+            {lead.state === 'mailed' && <span className="tag sent-tag">Sent</span>}
+          </div>
+          <button className="close" onClick={onClose} aria-label="Close">×</button>
+        </header>
+        <img src={api.imageUrl(lead.id, 'postcard')} alt="Postcard proof" />
+        <footer>
+          <a className="link" href={api.imageUrl(lead.id, 'postcard')}
+             target="_blank" rel="noreferrer">Open full size</a>
+          <button className="ghost-btn" onClick={onClose}>Back to results</button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
+function ResultCard({ lead, onSend, onPreview, busy }) {
   const q = lead.qualification || {}
   const qc = lead.qc || {}
   const ready = lead.state === 'composed' || lead.state === 'approved'
@@ -58,6 +95,9 @@ function ResultCard({ lead, onSend, busy }) {
           <p className="tags">
             <span className="tag">{q.surface}</span>
             <span className="tag">condition {q.condition_score}/10</span>
+            {qc.material && (
+              <span className="tag">{qc.material.replace(/_/g, ' ')}</span>
+            )}
             {qc.mask?.mode && <span className="tag ghost">{qc.mask.mode}</span>}
           </p>
         ) : userRejected ? (
@@ -72,14 +112,20 @@ function ResultCard({ lead, onSend, busy }) {
         )}
 
         {sent ? (
-          <div className="sent">✓ Postcard sent</div>
+          <div className="actions">
+            <div className="sent">✓ Postcard sent</div>
+            <button className="link as-button" onClick={() => onPreview(lead)}>
+              View postcard
+            </button>
+          </div>
         ) : ready ? (
           <div className="actions">
             <button className="send" disabled={busy} onClick={() => onSend(lead.id)}>
               Send postcard
             </button>
-            <a className="link" href={api.imageUrl(lead.id, 'postcard')}
-               target="_blank" rel="noreferrer">Preview</a>
+            <button className="link as-button" onClick={() => onPreview(lead)}>
+              Preview
+            </button>
           </div>
         ) : null}
       </div>
@@ -95,6 +141,11 @@ export default function Scan({ onDone, config }) {
   const [error, setError] = useState(null)
   const timer = useRef(null)
   const [elapsed, setElapsed] = useState(0)
+  const [preview, setPreview] = useState(null)
+  const [mode, setMode] = useState('market')      // market | block
+  const [zip, setZip] = useState('')
+  const [minPrice, setMinPrice] = useState(700000)
+  const [campaignLimit, setCampaignLimit] = useState(20)
   const stepStart = useRef(Date.now())
   const lastStepCount = useRef(0)
 
@@ -152,6 +203,19 @@ export default function Scan({ onDone, config }) {
     } catch (e) { setError(e.message); setBusy(false) }
   }
 
+  const startCampaign = async (e, override) => {
+    e?.preventDefault()
+    const zc = (override ?? zip).trim()
+    if (!zc) return
+    setBusy(true); setError(null); setJob(null)
+    try {
+      const { job_id } = await api.campaign({
+        zip_code: zc, min_price: minPrice, months: 6, limit: campaignLimit,
+      })
+      poll(job_id)
+    } catch (e) { setError(e.message); setBusy(false) }
+  }
+
   const send = async (id) => {
     setBusy(true)
     try {
@@ -161,6 +225,7 @@ export default function Scan({ onDone, config }) {
   }
 
   const leads = job?.leads || []
+  const previewLead = preview && leads.find(l => l.id === preview.id)
   const ready = leads.filter(l => ['composed', 'approved', 'mailed'].includes(l.state))
   const skipped = leads.filter(l => !['composed', 'approved', 'mailed'].includes(l.state))
   // A QC failure is a different story from "no driveway here" - one is worth
@@ -171,6 +236,64 @@ export default function Scan({ onDone, config }) {
     <section className="scan">
       {!job && (
         <div className="hero">
+          <div className="modes">
+            <button className={mode === 'market' ? 'on' : ''} disabled={busy}
+                    onClick={() => setMode('market')}>Target a market</button>
+            <button className={mode === 'block' ? 'on' : ''} disabled={busy}
+                    onClick={() => setMode('block')}>Scan one block</button>
+          </div>
+
+          {mode === 'market' ? (
+            <>
+              <h1>Every recent buyer in a ZIP code.</h1>
+              <p>Enter a ZIP. We pull homes sold in the last six months above
+                 your price floor from county records, photograph each one,
+                 and build a postcard for every driveway worth upgrading.</p>
+
+              <form className="searchbar" onSubmit={startCampaign}>
+                <input value={zip} inputMode="numeric" maxLength={5}
+                       onChange={e => setZip(e.target.value.replace(/\D/g, ''))}
+                       placeholder="ZIP code, e.g. 33156" disabled={busy} />
+                <button type="submit" disabled={busy || zip.trim().length !== 5}>
+                  {busy ? 'Building…' : 'Build campaign'}
+                </button>
+              </form>
+
+              <div className="filters">
+                <label>
+                  <span>Sold above</span>
+                  <select value={minPrice} disabled={busy}
+                          onChange={e => setMinPrice(Number(e.target.value))}>
+                    <option value={400000}>$400,000</option>
+                    <option value={700000}>$700,000</option>
+                    <option value={1000000}>$1,000,000</option>
+                    <option value={2000000}>$2,000,000</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Up to</span>
+                  <select value={campaignLimit} disabled={busy}
+                          onChange={e => setCampaignLimit(Number(e.target.value))}>
+                    <option value={5}>5 homes</option>
+                    <option value={20}>20 homes</option>
+                    <option value={50}>50 homes</option>
+                  </select>
+                </label>
+              </div>
+
+              <p className="try">South East Florida — Miami-Dade, Broward and
+                 Palm Beach county records. Try 33156, 33019 or 33480.</p>
+              <div className="chips">
+                {['33156', '33019', '33480', '33432', '33414'].map(z => (
+                  <button key={z} className="example" disabled={busy}
+                          onClick={() => { setZip(z); startCampaign(null, z) }}>
+                    <b>{z}</b>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+          <>
           <h1>Find every driveway on the block.</h1>
           <p>Enter a job site address. We'll find the neighbours, spot the worn
              driveways, and generate a ready-to-mail postcard for each one.</p>
@@ -206,6 +329,8 @@ export default function Scan({ onDone, config }) {
               the street, and the new driveway is rendered onto that photo.
             </p>
           </div>
+          </>
+          )}
         </div>
       )}
 
@@ -215,14 +340,21 @@ export default function Scan({ onDone, config }) {
         <div className="progress">
           <div className="phead">
             <span className={`chip ${job.status}`}>
-              {job.status === 'running' ? 'Scanning block' :
-               job.status === 'failed' ? 'Scan failed' : 'Scan complete'}
+              {job.status === 'running'
+                ? (job.zip_code ? 'Building campaign' : 'Scanning block')
+                : job.status === 'failed' ? 'Scan failed' : 'Scan complete'}
             </span>
             {job.status === 'running' && (
               <p className="hint">Renders take about 15 seconds each and run in
                  parallel — a full block is usually under a minute.</p>
             )}
-            <h2>{job.address}</h2>
+            <h2>{job.address || (job.zip_code ? `ZIP ${job.zip_code}` : '')}</h2>
+            {job.market && (
+              <p className="hint">
+                {job.market.counties.join(', ').replace(/_/g, '-')} ·
+                median sale ${Math.round(job.market.median_price).toLocaleString()}
+              </p>
+            )}
           </div>
           <ul className="steps">
             {(job.steps || []).map((s, i) => (
@@ -263,10 +395,15 @@ export default function Scan({ onDone, config }) {
           </div>
 
           <div className="grid-results">
-            {ready.map(l => <ResultCard key={l.id} lead={l} onSend={send} busy={busy} />)}
-            {skipped.map(l => <ResultCard key={l.id} lead={l} onSend={send} busy={busy} />)}
+            {ready.map(l => <ResultCard key={l.id} lead={l} onSend={send}
+                                        onPreview={setPreview} busy={busy} />)}
+            {skipped.map(l => <ResultCard key={l.id} lead={l} onSend={send}
+                                          onPreview={setPreview} busy={busy} />)}
           </div>
         </>
+      )}
+      {previewLead && (
+        <PostcardModal lead={previewLead} onClose={() => setPreview(null)} />
       )}
     </section>
   )

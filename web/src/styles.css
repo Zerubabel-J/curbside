@@ -236,3 +236,94 @@ button.ghost { color: var(--muted); }
   /* A long detail string next to a long label overflows a narrow row. */
   .summary { font-size: .86rem; }
 }
+
+/* ---------- postcard preview overlay ----------
+   Opening the proof in a new tab left the app behind with no way back. The
+   overlay keeps the scan results underneath, so closing it returns you to
+   exactly where you were. */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(8, 10, 14, .78);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; max-width: min(1100px, 96vw); width: 100%;
+  max-height: 92vh; display: flex; flex-direction: column;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+}
+.modal header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; padding: .85rem 1rem; border-bottom: 1px solid var(--line);
+}
+.modal header strong { font-size: .95rem; }
+.modal .sent-tag { margin-left: .55rem; background: #14532d; color: #bbf7d0; }
+.modal img {
+  display: block; width: 100%; height: auto; object-fit: contain;
+  background: #fff; min-height: 0; flex: 1 1 auto;
+}
+.modal footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; padding: .7rem 1rem; border-top: 1px solid var(--line);
+}
+.modal .close {
+  background: none; border: none; color: var(--muted);
+  font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0 .25rem;
+}
+.modal .close:hover { color: var(--fg); }
+.ghost-btn {
+  background: none; border: 1px solid var(--line); color: var(--fg);
+  border-radius: 6px; padding: .4rem .8rem; font-size: .85rem; cursor: pointer;
+}
+.ghost-btn:hover { border-color: var(--muted); }
+.link.as-button {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; font-size: .8rem; color: var(--muted);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.link.as-button:hover { color: var(--fg); }
+.result .sent { color: #4ade80; font-size: .85rem; }
+
+@media (max-width: 640px) {
+  .modal-backdrop { padding: .6rem; }
+  .modal footer { flex-direction: column-reverse; align-items: stretch; }
+  .ghost-btn { width: 100%; }
+}
+
+/* ---------- market vs block mode ----------
+   A contractor names a market, not a job site. The ZIP campaign is the
+   primary path; the block scan stays for the case where they are already
+   standing on the street. */
+.modes {
+  display: inline-flex; gap: .25rem; margin: 0 auto 1.4rem;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: .25rem;
+}
+.modes button {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: .88rem; padding: .42rem .95rem; border-radius: 6px;
+}
+.modes button.on { background: var(--accent); color: #fff; }
+.modes button:not(.on):hover { color: var(--fg); }
+.modes button:disabled { opacity: .5; cursor: default; }
+
+.filters {
+  display: flex; gap: 1.2rem; justify-content: center;
+  margin: .9rem 0 .2rem; flex-wrap: wrap;
+}
+.filters label {
+  display: inline-flex; align-items: center; gap: .5rem;
+  font-size: .85rem; color: var(--muted);
+}
+.filters select {
+  background: var(--panel); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: .35rem .5rem; font: inherit; font-size: .85rem;
+}
+
+@media (max-width: 640px) {
+  .modes { width: 100%; }
+  .modes button { flex: 1; padding: .5rem .4rem; }
+  .filters { gap: .7rem; }
+}
