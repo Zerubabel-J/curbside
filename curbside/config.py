@@ -136,6 +136,9 @@ class Settings:
     #: recipient recognises their own front door - but Google's terms prohibit
     #: their imagery in print advertising, so it is prototype-only.
     view: str = _env("CURBSIDE_VIEW", "aerial")
+    #: Which copy the postcard carries. Layout and compliance are identical
+    #: across templates, so response differences are the words, not the design.
+    template: str = _env("CURBSIDE_TEMPLATE", "curb_appeal")
     source: str = DEFAULT_SOURCE
     crop_meters: float = _env("CURBSIDE_CROP_METERS", 32.0, float)
     #: Street View framing. 80 degrees fits a typical lot with its driveway;

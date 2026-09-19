@@ -172,3 +172,39 @@ def test_a_real_font_is_available():
     assert isinstance(f, ImageFont.FreeTypeFont), (
         "no scalable font found; install fonts-dejavu-core")
     assert f.size == int(0.175 * postcard.DPI)
+
+
+# ------------------------------------------------------- copy templates
+
+def test_every_template_builds_a_valid_card(images, tmp_path):
+    """Templates change the words, not the geometry. A comparison between two
+    of them is only honest if the design is identical."""
+    from curbside.compose import templates
+    b, a = images
+    for key, _, _ in templates.choices():
+        out = tmp_path / f"{key}.jpg"
+        build(b, a, "1 A St, Indianapolis, IN 46201", out,
+              return_address=RA, **templates.get(key))
+        assert Image.open(out).size == (1875, 1275)
+
+
+def test_templates_carry_distinct_headlines():
+    """Six templates that say the same thing test nothing."""
+    from curbside.compose import templates
+    heads = {templates.TEMPLATES[k]["headline"] for k in templates.TEMPLATES}
+    assert len(heads) == len(templates.TEMPLATES)
+
+
+def test_template_overrides_never_touch_compliance(images, tmp_path):
+    """Copy is the contractor's to choose. The disclosure is not."""
+    from curbside.compose import templates
+    for key, _, _ in templates.choices():
+        assert "disclosure" not in templates.get(key)
+        assert "return_address" not in templates.get(key)
+
+
+def test_unknown_template_is_refused():
+    from curbside.compose import templates
+    import pytest as _p
+    with _p.raises(ValueError, match="unknown template"):
+        templates.get("does_not_exist")
