@@ -88,12 +88,21 @@ def box_to_mask(box, size, feather=2, pad=0.02):
     w, h = size
     vals = [float(box.get(k, 0)) for k in ("x0", "y0", "x1", "y1")]
 
-    # Models mix the two conventions within a single box - "x0": 673 beside
-    # "x1": 1.0 is a real response. Deciding per value rather than per box
-    # keeps the mixed case from collapsing to an empty rectangle, which then
-    # silently drops the prior and leaves the mask to raw pixel difference.
+    # Three conventions turn up in practice and the box does not say which it
+    # is using: normalized 0-1, raw pixels, and Gemini's documented 0-1000
+    # grid. The grid is the common one and the easiest to misread - on a 640px
+    # image "y1": 997 looks like a pixel value 357px outside the frame, which
+    # collapses the box to nothing, drops the prior, and takes the mask with
+    # it. Values above the image's own extent can only be grid coordinates.
+    grid = max(vals) > 1.5 and max(vals) <= 1000 and (
+        max(vals[0], vals[2]) > w or max(vals[1], vals[3]) > h
+        or max(vals) > max(w, h))
+
     def norm(v, extent):
-        return v / extent if v > 1.5 else v
+        if v <= 1.5:
+            return v                      # already normalized
+        return v / 1000.0 if grid else v / extent
+
     nx = lambda v: norm(v, w)
     ny = lambda v: norm(v, h)
     x0 = max(0.0, nx(vals[0]) - pad) * w

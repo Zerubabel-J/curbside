@@ -267,3 +267,28 @@ def test_every_material_keeps_the_boundary_language():
         bold = ladder[0][1].lower()
         assert "do not touch anything else" in bold
         assert m[1].split(",")[0].lower() in bold, "material must reach the prompt"
+
+
+def test_box_coordinates_survive_all_three_conventions():
+    """The model answers in normalized 0-1, raw pixels, or Gemini's 0-1000
+    grid, and the box does not say which. Reading a grid value as a pixel puts
+    it outside the frame, which empties the box, drops the driveway prior, and
+    - with require_prior on - rejects a lead whose driveway was found
+    correctly. Three leads failed this way in production."""
+    from curbside.render.segmentation import box_to_mask
+    size = (640, 640)
+    normalized = box_to_mask({"x0": 0.0, "y0": 0.75, "x1": 0.77, "y1": 1.0}, size)
+    grid = box_to_mask({"x0": 0.0, "y0": 749, "x1": 767, "y1": 997}, size)
+    pixels = box_to_mask({"x0": 0, "y0": 480, "x1": 491, "y1": 638}, size)
+
+    for name, m in (("grid", grid), ("pixels", pixels)):
+        assert m.mean() > 0.1, f"{name} box collapsed to nothing"
+        assert abs(m.mean() - normalized.mean()) < 0.02, \
+            f"{name} disagrees with the normalized reading"
+
+
+def test_a_box_mixing_conventions_still_resolves():
+    """'x1': 1.0 beside 'y0': 743 is a real response."""
+    from curbside.render.segmentation import box_to_mask
+    m = box_to_mask({"x0": 0.0, "y0": 743, "x1": 1.0, "y1": 1.0}, (640, 640))
+    assert 0.15 < m.mean() < 0.40
