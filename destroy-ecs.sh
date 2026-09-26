@@ -30,6 +30,12 @@ TG_ARN=$(aws elbv2 describe-target-groups --names "${NAME}-tg" \
 
 aws ecs delete-cluster --cluster "$NAME" --region "$REGION" >/dev/null 2>&1 || true
 aws ecr delete-repository --repository-name "$NAME" --force --region "$REGION" >/dev/null 2>&1 || true
+# Every secret the deploy may have created, not just the first one. A secret
+# left behind bills quietly at $0.40/month and is easy to miss.
+for _s in lob streetview; do
+  aws secretsmanager delete-secret --secret-id "${NAME}/${_s}" \
+    --force-delete-without-recovery --region "$REGION" >/dev/null 2>&1 || true
+done
 aws secretsmanager delete-secret --secret-id "${NAME}/gemini" \
   --force-delete-without-recovery --region "$REGION" >/dev/null 2>&1 || true
 aws logs delete-log-group --log-group-name "/ecs/${NAME}" --region "$REGION" >/dev/null 2>&1 || true
