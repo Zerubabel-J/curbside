@@ -1,30 +1,37 @@
 # Curbside
 
-**AI-rendered direct mail for home-services contractors.**
+**AI-rendered direct mail for driveway contractors.**
 
-Takes a US street address, pulls a public-domain aerial photograph of that
-property, decides whether the driveway needs replacing, renders a new one onto
-the homeowner's own photo, and produces a print-ready, legally compliant
-postcard - with a human approving every piece before anything is mailed.
+Name a market - a ZIP code - and Curbside pulls every home that sold there
+recently from county public records, photographs each one from the street,
+decides which have a driveway worth upgrading, renders a new driveway onto the
+homeowner's own photo, and produces a print-ready, legally compliant postcard.
+A human approves every piece before anything is mailed.
 
-**Live demo: <https://web-zeta-dusky-84.vercel.app/>** - type an Indiana
-address or click a verified block. A six-home scan takes about a minute.
+**Live demo: <https://web-zeta-dusky-84.vercel.app/>** - enter a South East
+Florida ZIP (33019, 33156, 33480) or scan a single block.
 
 ---
 
 ## Two ways in
 
-**Scan a block** - the product. Type one address, get postcards for every
-neighbour worth mailing.
+**Target a market** - the product. A contractor names a ZIP, not an address.
 
 ```
-✓ Finding address coordinates      1240 Fairfield Ave, Indianapolis, IN
-✓ Scanning neighbouring properties 6 homes found
-✓ Fetching aerial imagery          6 imaged
-✓ Analysing 6 driveways            2 candidates, 4 skipped
-✓ Rendering 2 driveways + QC       2 passed, 0 rejected
-✓ Laying out postcards             2 ready to send
+✓ Searching county records for 33019   20 sold over $700,000
+✓ Building the mailing list            20 to process
+✓ Fetching street view photos          18 imaged
+✓ Analysing 18 driveways               2 candidates, 16 skipped
+✓ Rendering 2 driveways + QC           2 passed, 0 rejected
+✓ Laying out postcards                 2 ready for review
 ```
+
+The signal is a **recent high-value sale**: a new owner with budget, in the
+months when exterior work actually gets commissioned.
+
+**Scan a block** - the secondary path. Type one job-site address, get
+postcards for the neighbours worth mailing. Useful when the contractor is
+already standing on the street.
 
 **Pipeline** - the operations console. Batch runs, QC detail, spend by stage,
 and the approval queue.
@@ -36,7 +43,8 @@ quality control that inspects each AI edit and rejects bad ones.*
 
 ```mermaid
 flowchart LR
-    A["📍 Address"] --> B["🛰️ Aerial photo<br/>public domain"]
+    A["📮 ZIP code"] --> A2["🏠 Sold homes<br/>county records"]
+    A2 --> B["📷 Street view<br/>front of house"]
     B --> C{"🔍 Needs a<br/>driveway?"}
     C -->|no| X["✕ Rejected<br/>$0.0009 saved a $0.905 mailing"]
     C -->|yes| D["🎨 Render new<br/>paver driveway"]
@@ -166,8 +174,13 @@ flowchart TB
 
 **Why consensus.** The segmentation prior knows *what a driveway is* but traces
 it loosely. The render diff knows *exactly which pixels changed* but not what
-they are. Their intersection is both precise and semantically anchored. If the
-prior is unusable, it degrades to diff-only rather than failing.
+they are. Their intersection is both precise and semantically anchored.
+
+At **aerial** level an unusable prior degrades to diff-only. At **street**
+level it refuses. The frame there holds lawn, walkways and the neighbours'
+frontage, and a mask built from the change alone cannot tell which of them the
+renderer touched - that is how a paved lawn reaches a postcard. Refusing costs
+a lead; the alternative costs a mailing that shows the wrong surface paved.
 
 **Why composite.** The output is rebuilt as *original everywhere, rendered only
 inside the mask*. Pixels outside the mask are **unchanged by construction, not
@@ -178,9 +191,34 @@ still survives.
 a vision model what the masked region actually *is* - a roof or road can pass a
 drift check while being completely wrong.
 
+**A bug worth recording.** The segmentation model answers in one of three
+conventions - normalized 0-1, raw pixels, or Gemini's 0-1000 grid - and the
+response does not say which. Reading a grid value as a pixel put the box
+outside the frame on a 640px image, which emptied it, dropped the prior, and
+made every lead on a block refuse. The symptom looked like "street level does
+not work"; the cause was one unit conversion.
+
 ---
 
-## Why the imagery comes from state GIS
+## Imagery: two modes, and an open licensing question
+
+The product runs in one of two modes, set by `CURBSIDE_VIEW`.
+
+**`street`** - Google Street View, a photograph of the front of the house.
+This is what the driveway product ships with, because a driveway is a frontage
+feature and the client asked for it directly: *"for the driveway app I would
+prefer the generated driveway to be rendered onto a street view picture of the
+front of the house."*
+
+**`aerial`** - state or county orthoimagery under CC0-1.0. Better licensed,
+and the right choice for anything photographed from above.
+
+### The unresolved part
+
+Street View is **not licensed for print**. Google's Geo Guidelines are
+explicit, and the table below is the reason aerial was built first. Running in
+`street` mode is a deliberate prototype decision, taken knowingly, and it is a
+genuine blocker before a commercial campaign - not a detail to discover later.
 
 Every commercial imagery provider prohibits this use case, and several name
 print and advertising explicitly.
@@ -210,6 +248,69 @@ Adding a state is one entry in `curbside/config.py`. Full analysis, including
 the traps found (Texas reports `CC0-1.0` on a $6,000–$375,000/yr
 subscription-only service), is in **[docs/LICENSING.md](docs/LICENSING.md)**.
 
+### Street level is harder than aerial
+
+An aerial tile is centred on the parcel. Street View is centred on a point on
+the *road*, so one house's photograph routinely contains its neighbours'
+frontage too - and the renderer has no way to know which driveway belongs to
+the address it was given. Three things address that:
+
+- the field of view is computed from the camera-to-house distance, so roughly
+  one lot width is in frame at any range
+- county parcel centroids aim the camera, where a parcel layer exists
+- a lead is refused outright when no driveway prior can be established, rather
+  than falling back to "whatever changed in the photo"
+
+Measured effect on real Florida blocks: **1-2 mailable cards per 6 homes.**
+The rest are refused for good reasons - duplexes, front walkways mistaken for
+driveways, and homes behind hedges. In the most expensive ZIPs (Palm Beach
+33480, median sale $11.5M) the yield approaches zero, because those homes are
+screened from the road by design. High property value and street-level
+visibility are inversely correlated.
+
+---
+
+## The postcard
+
+Built to Lob's 4x6 template: 4.25 x 6.25 in with bleed, trimmed to 4 x 6, at
+300 DPI. Size is a postage decision - USPS charges letter rate up to 4.25x6
+and flat rate above it, and Lob's price follows the same split. The artwork
+and the `size` field in the API call must agree or the printer rejects it.
+
+**Verified against a real proof, not the docs.** Two test postcards were sent
+through Lob and the returned PDFs inspected. Lob trimmed to exactly 432 x 288
+pt (6 x 4 in) and placed the recipient block, barcode, return address and
+postage into its own reserved zone on the back. Three things only that proof
+revealed:
+
+- `use_type` is mandatory - the first send failed with HTTP 422. Every piece
+  would have failed in production.
+- Lob's sandbox does not run address verification, so *every* real address
+  comes back undeliverable on a test key. The documented stand-in is
+  substituted in test mode and flagged `simulated` so a sandbox receipt is
+  never mistaken for evidence that an address is real.
+- The container had no fonts. `python:*-slim` ships without DejaVu, so the
+  headline silently fell back to a bitmap default and rendered unreadably
+  small. Nothing errored; every test passed; only the printed proof showed it.
+
+**Don't design the back.** Lob owns that area and prints into it. A
+collaborator on a sibling project spent days reconciling a web preview against
+Lob's generated PDF; the piece here has no second renderer to reconcile - the
+JPEG submitted is the JPEG printed.
+
+### Copy and materials
+
+Six copy templates in `compose/templates.py` - curb appeal, home value, cracks
+and settling, neighbours, seasonal, plain offer. Layout and compliance footer
+are identical across all six, so a response difference measures the words, not
+the design.
+
+Five driveway finishes rotate deterministically by lead id, so a block of
+postcards does not look like one postcard printed five times, and a retry
+keeps the same offer. The boundary language in every render prompt is
+identical - varying the finish cannot weaken the guarantee that nothing
+outside the driveway changes.
+
 ---
 
 ## Compliance is enforced in code
@@ -233,43 +334,90 @@ encodes conservative defaults so the open questions are reviewed, not missed.
 
 ---
 
-## Finding recently-sold homes - free
+## The lead source - county records, free
 
-Property transfers are public record, so several jurisdictions publish them
-directly. Both adapters are keyless and free.
+A contractor names a market, not an address. The question that turns a ZIP
+into a mailing list is *who bought a house here recently, and for how much* -
+a new owner with budget is the person who commissions exterior work.
 
-| Source | Freshness | Sale price | Licence |
-|---|---|---|---|
-| **Wake County, NC** | ~9 days | yes | unstated (public records) |
-| **Connecticut** | ~11 months | yes | **Public Domain** |
+All three of the target counties publish this as free, unauthenticated public
+record. No key, no signup, no contract.
+
+| County | Endpoint | Verified |
+|---|---|---|
+| **Miami-Dade** | `services.arcgis.com/.../PaGISView_gdb` | 121 sales in 33156 |
+| **Palm Beach** | `gis.pbcgov.org/.../QSALES` | Palm Beach only, 33480 |
+| **Broward** | `gisweb-adapters.bcpa.net/.../BCPA_EXTERNAL_JAN26` | 71 leads in 33019 |
 
 ```bash
-$ curbside sales-sources
-
-# freshest - genuinely "sold in the last six months"
-$ curbside run --sales wake_nc --sold-within-months 6 \
-               --min-price 200000 --max-year-built 2005
+# ZIP in, mailable addresses out
+$ curl "localhost:8000/sold?zip_code=33019&min_price=700000&months=6"
 ```
 
-Rows carry coordinates (Wake returns parcel polygons, CT returns points), so
-these leads **skip geocoding entirely** and its 1 req/sec limit.
+### Why not a paid API
 
-Two filters that matter:
+Every commercial alternative carries a restriction that has to be resolved
+before a campaign can run:
 
-- `--sold-within-months` is measured from the **dataset's newest record**, not
-  from today. Portals publish on a lag, so a calendar window often returns
-  nothing.
-- `--max-year-built` excludes new construction. Recent sales skew heavily to
-  new builds whose driveways are already new - in Wake County, filtering to
-  homes built before 2000 cuts 7,650 candidates to 2,806 genuinely worth
-  mailing.
+- **ATTOM** - the free tier is evaluation-only. Its terms permit use "solely
+  to test and evaluate... for the purpose of determining whether to enter into
+  a subsequent data license agreement", prohibit "using the ATTOM Products to
+  create, enhance or structure any database", and cap caching at 24 hours. You
+  could not legally keep a mailing list built from it.
+- **Estated** - acquired by ATTOM, no longer marketed to new customers.
+- **MLS / IDX** - NAR policy prohibits incorporating MLS data into an external
+  database "for use of business solicitation". Direct mail is solicitation.
+- **Zillow** - the public API was retired in 2021.
 
-**Intended use.** These are wired up for development and verification. Only
-Connecticut carries an explicit public-domain grant; the county portals
-publish openly but state no licence, which means *no restriction found*, not
-*commercial redistribution granted*. Each adapter reports `commercial_use` so
-the distinction stays visible. A commercial campaign should review the
-publisher's terms or move to a licensed source.
+Florida public records carry no such condition. If the product expands beyond
+Florida, RentCast is the best paid fallback found (~$74/mo, self-serve, no
+contract, permissive licence).
+
+### Three schema quirks, each found the hard way
+
+The counties disagree on almost everything, and two of the differences would
+have wasted postage:
+
+- **Palm Beach has no property ZIP.** `ZIP1`, `CITYNAME` and `PADDR*` are the
+  *owner's mailing address*. 15395 Whispering Willow Dr is in Wellington but
+  carries `ZIP1` 33480 because its owner collects post at a suite in Palm
+  Beach. Filtering on it selects homes by where the owner reads their mail, so
+  the search runs on `MUNICIPALITY` instead.
+- **Broward stores price as a formatted string** (`"$1,100,000"`), so no
+  server-side numeric filter is possible, and its address is split across
+  seven `SITUS_*` columns. Its parcel set is the join key for the sales layer,
+  so truncating it discards sales rather than returning fewer leads - that bug
+  returned 2 leads where 71 existed.
+- **Miami-Dade stores ZIP as ZIP+4** (`33156-0000`), so equality finds nothing.
+
+Two filters are applied everywhere: a price floor to screen out quitclaims and
+family transfers recorded as $10 sales, and a single-family filter, because
+condominiums and vacant land have no driveway to pave.
+
+## Where this stands
+
+**Working and verified end to end.** ZIP to postcard, on the deployed site:
+county records, Street View, qualification, masked render, two-axis QC, 4x6
+postcard, and a real Lob submission returning a print-ready PDF.
+
+**Known limits, stated plainly:**
+
+- **Render yield is 1-2 mailable cards per 6 homes** at street level. The
+  refusals are mostly correct - duplexes, front walkways, homes behind hedges -
+  but it means a 20-home ZIP produces a handful of pieces, not twenty.
+- **Render quality is inconsistent.** Roughly one card in three reads as
+  genuinely premium; the others are too subtle to sell a driveway, and one
+  observed render came out looking worse than the original. The safety rules
+  that stopped the model paving lawns have made it timid.
+- **Reshaping is not built.** Turning a straight driveway into a semi-circular
+  one means painting *outside* the existing driveway, onto lawn - which is
+  exactly what the masked compositing exists to prevent. It is a deliberate
+  trade-off, not an oversight, and needs a decision before it is built.
+- **Street View is not licensed for print.** See the imagery section.
+- **Live mail is gated.** A `test_` key cannot mail; a `live_` key needs
+  `CURBSIDE_ALLOW_LIVE_MAIL=1`, and `deploy-ecs.sh` refuses to ship one.
+
+---
 
 ## Quick start
 
@@ -320,7 +468,11 @@ tests, dry-run mail. Only the model calls bill.
 | Segment + render + semantic QC | ~$0.07 |
 | **A qualified lead, end to end** | **~$0.07** |
 | A six-home block scan | ~$0.20 |
+| A 20-home ZIP campaign | ~$0.30 |
 | Print + postage, per piece mailed | $0.905 |
+
+County record lookups are free and keyless, so naming a market costs nothing
+until a render is attempted.
 
 `CURBSIDE_BUDGET` is a hard ceiling checked before every paid call. It guards
 API spend only - modelled print-and-postage never consumes it.
@@ -346,9 +498,11 @@ flowchart LR
     U["👤 Browser"] -->|HTTPS| V["Vercel<br/>React build"]
     V -->|"/api/* proxied<br/>server-side"| ALB["ALB :80"]
     ALB --> ECS["ECS Fargate<br/>FastAPI container"]
-    ECS --> SM["Secrets Manager<br/>GEMINI_API_KEY"]
-    ECS --> GIS["State GIS<br/>CC0 imagery"]
+    ECS --> SM["Secrets Manager<br/>Gemini · Street View · Lob"]
+    ECS --> CTY["County records<br/>sold homes, free"]
+    ECS --> SV["Google Street View"]
     ECS --> GEM["Gemini API"]
+    ECS --> LOB["Lob<br/>print + mail"]
 
     style ECS fill:#cb3f14,stroke:#cb3f14,color:#fff
     style V fill:#2f7d55,stroke:#2f7d55,color:#fff
@@ -358,6 +512,8 @@ flowchart LR
 export AWS_PROFILE=<profile>
 export AWS_REGION=us-east-1
 export GEMINI_API_KEY=...
+export GOOGLE_STREETVIEW_API_KEY=...    # optional; absent falls back to aerial
+export LOB_API_KEY=test_...             # optional; absent falls back to dry-run
 
 ./deploy-ecs.sh          # builds, pushes to ECR, deploys, prints the ALB DNS
 
@@ -398,7 +554,18 @@ volume or sync to S3 if results need to survive.
 | ECR + Secrets Manager | $0.03 |
 | **Total** | **$3.86** |
 
-Left running a month it is **$58.74** - tear it down.
+Left running a month it is **$58.74**. This is not hypothetical: an earlier
+demo was left up for sixteen days and billed accordingly. Fargate and the ALB
+charge by the hour whether or not anybody visits.
+
+**Deploy for the demo, tear down after.** `./destroy-ecs.sh` removes the
+service, load balancer, cluster, ECR repository, all three secrets, the log
+group, IAM roles and the security group. A redeploy takes about ten minutes
+because the Docker layers are cached, so there is no reason to leave it up
+between conversations.
+
+Local development needs none of this - `./run-local.sh` runs the whole
+pipeline against the same live county records and APIs.
 
 See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the full walkthrough and
 **[docs/DEMO.md](docs/DEMO.md)** for troubleshooting.

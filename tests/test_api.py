@@ -215,3 +215,35 @@ def test_campaign_reports_progress_by_step(client, monkeypatch):
     status = client.get(f"/scan/{job}").json()
     assert status["steps"], "a campaign must report steps"
     assert status["steps"][0]["label"].startswith("Searching county records")
+
+
+def test_sold_lookup_rejects_a_bad_zip(client):
+    """Angelo's app calls this directly, so a typo must come back as a clear
+    400 rather than an empty list that looks like a dead market."""
+    r = client.get("/sold", params={"zip_code": "abcde"})
+    assert r.status_code == 400
+    assert "ZIP" in r.json()["detail"]
+
+
+def test_sold_lookup_rejects_an_unknown_county(client):
+    r = client.get("/sold", params={"zip_code": "33019", "county": "nassau"})
+    assert r.status_code == 400
+
+
+def test_sold_lookup_shape_is_stable(client, monkeypatch):
+    """A second app consumes these field names, so they are an interface."""
+    import datetime as dt
+    from curbside.sources import sold as sold_src
+
+    lead = sold_src.SoldLead("900 DIPLOMAT PKWY", "", "33019", 1_638_000,
+                             dt.date(2026, 9, 10), "SINGLE FAMILY", "broward")
+    monkeypatch.setattr(sold_src, "search", lambda *a, **k: ([lead], []))
+
+    d = client.get("/sold", params={"zip_code": "33019"}).json()
+    assert d["count"] == 1
+    row = d["results"][0]
+    for field in ("address", "street", "city", "zip_code", "state",
+                  "sale_price", "sold_on", "property_use", "county"):
+        assert field in row, f"{field} is part of the published shape"
+    assert row["sold_on"] == "2026-09-10"
+    assert row["address"] == "900 DIPLOMAT PKWY, FL 33019"

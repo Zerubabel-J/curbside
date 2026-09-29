@@ -607,6 +607,54 @@ def markets():
     }
 
 
+@app.get("/sold", tags=["leads"])
+def sold_lookup(
+    zip_code: str = Query(..., min_length=5, max_length=5,
+                          description="5-digit ZIP, e.g. 33019"),
+    county: Optional[str] = Query(None, description="miami_dade|palm_beach|broward"),
+    min_price: int = Query(700_000, ge=0),
+    months: int = Query(6, ge=1, le=24),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Homes sold recently in a ZIP, straight from county public records.
+
+    Read-only and free of any model call, so it is safe to poll and costs
+    nothing to run. This is the lead source on its own - the pipeline that
+    turns these into postcards lives behind /campaign.
+
+    Florida only for now: Miami-Dade, Broward and Palm Beach are the counties
+    whose appraisers publish sales with a mailable site address.
+    """
+    from curbside.sources import sold as sold_src
+    try:
+        sold_src.validate(zip_code, county)
+        leads, errors = sold_src.search(zip_code, county=county,
+                                        min_price=min_price, months=months,
+                                        limit=limit)
+    except sold_src.SoldError as e:
+        raise HTTPException(400, str(e))
+
+    return {
+        "zip_code": zip_code,
+        "min_price": min_price,
+        "months": months,
+        "count": len(leads),
+        # One county being down should not look like an empty market.
+        "partial_errors": errors,
+        "results": [{
+            "address": l.as_address(),
+            "street": l.address,
+            "city": l.city,
+            "zip_code": l.zip_code,
+            "state": "FL",
+            "sale_price": l.price,
+            "sold_on": l.sold_on.isoformat() if l.sold_on else None,
+            "property_use": l.property_use,
+            "county": l.county,
+        } for l in leads],
+    }
+
+
 @app.post("/campaign", tags=["pipeline"])
 def start_campaign(req: CampaignRequest, background: BackgroundTasks):
     """ZIP in, postcards out. The lead source a contractor actually uses."""
