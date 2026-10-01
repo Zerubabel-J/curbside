@@ -430,6 +430,7 @@ table.leads a { color: var(--accent); }
   border-radius: 6px; padding: .35rem .8rem; font: inherit; cursor: pointer;
 }
 .pager button:disabled { opacity: .4; cursor: default; }
+.pager em { font-style: normal; opacity: .65; }
 
 @media (max-width: 900px) {
   .actions-row { grid-template-columns: 1fr; }

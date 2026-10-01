@@ -15,6 +15,11 @@ const STATES = [
   { key: 'failed', label: 'Failed' },
 ]
 
+// A page holds what a person can actually scan without scrolling past the
+// action cards. The table is for working through leads one at a time, not for
+// admiring the size of the list.
+const PAGE = 10
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
                 'August', 'September', 'October', 'November', 'December']
 
@@ -60,7 +65,15 @@ export default function Sheet({ onOpenScan }) {
 
   const load = useCallback(async () => {
     try {
-      const d = await api.sheet({ state, q: search, limit: 100, offset })
+      const d = await api.sheet({ state, q: search, limit: PAGE, offset })
+      // A running job changes the counts under you - generating 10 postcards
+      // moves ten leads out of "New" while you are reading page 4 of it. Step
+      // back rather than showing an empty table on a filter that still has
+      // rows in it.
+      if (d.rows.length === 0 && d.total > 0 && offset > 0) {
+        setOffset(Math.max(0, Math.floor((d.total - 1) / PAGE) * PAGE))
+        return
+      }
       setData(d); setError(null)
     } catch (e) { setError(e.message) }
   }, [state, search, offset])
@@ -240,13 +253,16 @@ export default function Sheet({ onOpenScan }) {
         </table>
       </div>
 
-      {(data?.total ?? 0) > rows.length && (
+      {(data?.total ?? 0) > PAGE && (
         <div className="pager">
           <button disabled={offset === 0}
-                  onClick={() => setOffset(Math.max(0, offset - 100))}>Previous</button>
-          <span>{offset + 1}–{offset + rows.length} of {data.total}</span>
+                  onClick={() => setOffset(Math.max(0, offset - PAGE))}>Previous</button>
+          <span>
+            {rows.length ? offset + 1 : 0}–{offset + rows.length} of {data.total}
+            <em> · page {Math.floor(offset / PAGE) + 1} of {Math.ceil(data.total / PAGE)}</em>
+          </span>
           <button disabled={offset + rows.length >= data.total}
-                  onClick={() => setOffset(offset + 100)}>Next</button>
+                  onClick={() => setOffset(offset + PAGE)}>Next</button>
         </div>
       )}
     </section>
