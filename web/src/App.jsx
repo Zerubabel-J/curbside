@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
 import { Stat, Lead, LeadRow } from './components.jsx'
 import Scan from './Scan.jsx'
+import Sheet from './Sheet.jsx'
 
 const TABS = [
   { key: 'composed', label: 'Review' },
@@ -20,7 +21,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
-  const [view, setView] = useState('scan')
+  const [view, setView] = useState('leads')
 
   const refresh = useCallback(async () => {
     try {
@@ -79,6 +80,8 @@ export default function App() {
       <header className="top">
         <div className="brand">Curb<span>side</span></div>
         <nav className="nav">
+          <button className={view === 'leads' ? 'on' : ''}
+                  onClick={() => setView('leads')}>Leads</button>
           <button className={view === 'scan' ? 'on' : ''}
                   onClick={() => setView('scan')}>Scan a block</button>
           <button className={view === 'ops' ? 'on' : ''}
@@ -94,6 +97,8 @@ export default function App() {
         )}
         <span className="pill">${spend.toFixed(2)} spent</span>
       </header>
+
+      {view === 'leads' && <Sheet onOpenScan={() => setView('scan')} />}
 
       {view === 'scan' && <Scan onDone={refresh} config={config} />}
 

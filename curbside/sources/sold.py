@@ -74,10 +74,24 @@ _TIMEOUT = 90
 _PAGE = 1000
 
 
+#: A query string longer than this is sent as a POST body instead. ArcGIS
+#: accepts either, but a long `FOLIO_NUMBER IN (...)` clause pushes the URL
+#: past what the gateway will route and comes back as an HTML 404 - which
+#: looks like a dead endpoint rather than an oversized request. Measured
+#: against Broward's gateway, which is the strictest of the three.
+_MAX_URL = 1800
+
+
 def _get(url, params, timeout=_TIMEOUT):
     q = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{url}?{q}",
-                                 headers={"User-Agent": "curbside/0.4"})
+    if len(url) + len(q) > _MAX_URL:
+        req = urllib.request.Request(
+            url, data=q.encode(),
+            headers={"User-Agent": "curbside/0.4",
+                     "Content-Type": "application/x-www-form-urlencoded"})
+    else:
+        req = urllib.request.Request(f"{url}?{q}",
+                                     headers={"User-Agent": "curbside/0.4"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.load(r)
@@ -127,12 +141,15 @@ _MD_URL = ("https://services.arcgis.com/8Pc9XBTAsYuxx9Ny/arcgis/rest/"
            "services/PaGISView_gdb/FeatureServer/0/query")
 
 
-def _miami_dade(zip_code, min_price, since, limit):
+def _miami_dade(zip_code, min_price, since, limit, until=None):
     # ZIP is stored ZIP+4 ('33156-0000'), so an equality test finds nothing.
-    where = (f"TRUE_SITE_ZIP_CODE LIKE '{zip_code}%' "
-             f"AND PRICE_1 > {min_price} "
+    # Without a ZIP the query runs county-wide, which is how a month-at-a-time
+    # pull works - roughly 500 qualifying sales a month, 25s to fetch.
+    where = ((f"TRUE_SITE_ZIP_CODE LIKE '{zip_code}%' AND " if zip_code else "")
+             + f"PRICE_1 > {min_price} "
              f"AND DATEOFSALE_UTC >= DATE '{since:%Y-%m-%d}' "
-             f"AND {_SINGLE_FAMILY['miami_dade']}")
+             + (f"AND DATEOFSALE_UTC < DATE '{until:%Y-%m-%d}' " if until else "")
+             + f"AND {_SINGLE_FAMILY['miami_dade']}")
     rows = _paged(_MD_URL, where,
                   "TRUE_SITE_ADDR,TRUE_SITE_CITY,TRUE_SITE_ZIP_CODE,"
                   "PRICE_1,DATEOFSALE_UTC,DOR_DESC",
@@ -201,20 +218,26 @@ _PB_ZIP_TO_MUNI = {
 }
 
 
-def _palm_beach(zip_code, min_price, since, limit):
-    munis = _PB_ZIP_TO_MUNI.get(zip_code)
-    if not munis:
-        # Better to return nothing than to filter on the owner's mailing ZIP
-        # and mail a stranger's town.
-        raise SoldError(f"ZIP {zip_code} is not mapped to a Palm Beach "
-                        "municipality; the sales layer has no property ZIP")
-    quoted = ", ".join(f"'{m}'" for m in munis)
+def _palm_beach(zip_code, min_price, since, limit, until=None):
+    if zip_code:
+        munis = _PB_ZIP_TO_MUNI.get(zip_code)
+        if not munis:
+            # Better to return nothing than to filter on the owner's mailing
+            # ZIP and mail a stranger's town.
+            raise SoldError(f"ZIP {zip_code} is not mapped to a Palm Beach "
+                            "municipality; the sales layer has no property ZIP")
+        muni_clause = "MUNICIPALITY IN (%s) AND " % ", ".join(
+            f"'{m}'" for m in munis)
+    else:
+        # County-wide: every municipality, which is what a month pull wants.
+        muni_clause = ""
 
     # PRICE is stored as text, so a bare numeric comparison is rejected. CAST
     # works server-side, which keeps the filtering off this machine.
-    where = (f"MUNICIPALITY IN ({quoted}) "
-             f"AND SALE_DATE >= DATE '{since:%Y-%m-%d}' "
-             f"AND CAST(PRICE AS FLOAT) > {min_price} "
+    where = (muni_clause
+             + f"SALE_DATE >= DATE '{since:%Y-%m-%d}' "
+             + (f"AND SALE_DATE < DATE '{until:%Y-%m-%d}' " if until else "")
+             + f"AND CAST(PRICE AS FLOAT) > {min_price} "
              f"AND {_SINGLE_FAMILY['palm_beach']}")
     rows = _paged(_PB_URL, where,
                   "SITE_ADDR_STR,MUNICIPALITY,PRICE,SALE_DATE,"
@@ -225,9 +248,11 @@ def _palm_beach(zip_code, min_price, since, limit):
         out.append(SoldLead(
             address=(a.get("SITE_ADDR_STR") or "").strip(),
             city=(a.get("MUNICIPALITY") or "").strip().title(),
-            # The layer has no property ZIP, so the one the caller searched on
-            # is the only one that describes this house.
-            zip_code=zip_code,
+            # The layer has no property ZIP, so the one the caller searched
+            # on is the only one that describes this house. On a county-wide
+            # pull there is none, and the municipality carries the location -
+            # Lob verifies the address either way.
+            zip_code=zip_code or "",
             price=_money(a.get("PRICE")),
             sold_on=_epoch_to_date(a.get("SALE_DATE")),
             property_use=(a.get("PROPERTY_USE") or "").strip(),
@@ -254,7 +279,14 @@ def _broward_address(a):
     return f"{line} #{unit}" if unit else line
 
 
-def _broward(zip_code, min_price, since, limit):
+def _broward(zip_code, min_price, since, limit, until=None):
+    # County-wide, the ZIP-first strategy inverts: there is no ZIP to narrow
+    # the parcel set, and fetching every single-family parcel in Broward to
+    # build a join table is minutes of work. Driving from the sales layer and
+    # looking up only the folios that actually sold is the cheaper direction.
+    if not zip_code:
+        return _broward_countywide(min_price, since, limit, until)
+
     # Parcels first: the ZIP filter lives on the info layer, and it cuts the
     # folio set down before the sales layer is touched.
     parcels = _paged(_BC_INFO,
@@ -336,6 +368,61 @@ def _paged(url, where, out_fields, order_by, limit):
     return rows[:limit]
 
 
+def _broward_countywide(min_price, since, limit, until=None):
+    """Sales first, parcels second - the reverse of the per-ZIP path."""
+    where = f"SALE_DATE >= DATE '{since:%Y-%m-%d}'"
+    if until:
+        where += f" AND SALE_DATE < DATE '{until:%Y-%m-%d}'"
+    sales = _paged(_BC_SALES, where,
+                   "FOLIO_NUMBER,SALE_DATE,SALE_AMOUNT,SALE_VER",
+                   "SALE_DATE DESC", 20000)
+
+    # SALE_AMOUNT is a formatted string, so price is filtered here.
+    wanted = {}
+    for row in sales:
+        folio = row.get("FOLIO_NUMBER")
+        if not folio or folio in wanted:
+            continue
+        if _money(row.get("SALE_AMOUNT")) > min_price:
+            wanted[folio] = row
+        if len(wanted) >= limit * 3:
+            break
+    if not wanted:
+        return []
+
+    # Look up just those folios, in batches the URL can carry.
+    folios = list(wanted)
+    parcels = {}
+    for i in range(0, len(folios), 80):
+        chunk = folios[i:i + 80]
+        clause = ", ".join(f"'{f}'" for f in chunk)
+        rows = _paged(_BC_INFO,
+                      f"FOLIO_NUMBER IN ({clause}) AND {_SINGLE_FAMILY['broward']}",
+                      "FOLIO_NUMBER,SITUS_STREET_NUMBER,SITUS_STREET_DIRECTION,"
+                      "SITUS_STREET_NAME,SITUS_STREET_TYPE,SITUS_STREET_POST_DIR,"
+                      "SITUS_UNIT_NUMBER,SITUS_CITY,SITUS_ZIP_CODE",
+                      "FOLIO_NUMBER ASC", len(chunk))
+        for r in rows:
+            parcels[r["FOLIO_NUMBER"]] = r
+        if len(parcels) >= limit:
+            break
+
+    out = []
+    for folio, parcel in parcels.items():
+        sale = wanted[folio]
+        out.append(SoldLead(
+            address=_broward_address(parcel),
+            city="",
+            zip_code=(parcel.get("SITUS_ZIP_CODE") or "")[:5],
+            price=_money(sale.get("SALE_AMOUNT")),
+            sold_on=_epoch_to_date(sale.get("SALE_DATE")),
+            property_use="SINGLE FAMILY",
+            county="broward"))
+        if len(out) >= limit:
+            break
+    return out
+
+
 COUNTIES = {
     "miami_dade": ("Miami-Dade County", _miami_dade),
     "palm_beach": ("Palm Beach County", _palm_beach),
@@ -388,3 +475,39 @@ def search(zip_code, county=None, min_price=700_000, months=6, limit=200):
     leads = [l for l in leads if l.address and l.sold_on]
     leads.sort(key=lambda l: l.sold_on, reverse=True)
     return leads[:limit], errors
+
+
+def pull_month(year, month, min_price=700_000, limit_per_county=800):
+    """Every qualifying sale in one calendar month, across all three counties.
+
+    The per-ZIP search answers "who bought here"; this answers "who bought
+    this month", which is the question a contractor's mailing calendar asks.
+    Counties are queried in parallel - each is a slow ArcGIS call and they are
+    independent, so the wall time is the slowest one rather than their sum.
+    """
+    import concurrent.futures as _fx
+
+    since = _dt.date(int(year), int(month), 1)
+    until = (_dt.date(year + 1, 1, 1) if month == 12
+             else _dt.date(year, month + 1, 1))
+    min_price = max(float(min_price), MIN_ARMS_LENGTH_PRICE)
+
+    def one(key):
+        _, fn = COUNTIES[key]
+        try:
+            return key, fn(None, min_price, since, limit_per_county, until), None
+        except SoldError as e:
+            return key, [], str(e)
+        except Exception as e:
+            return key, [], f"{type(e).__name__}: {e}"
+
+    leads, errors = [], []
+    with _fx.ThreadPoolExecutor(max_workers=3) as pool:
+        for key, rows, err in pool.map(one, list(COUNTIES)):
+            if err:
+                errors.append(f"{key}: {err}")
+            leads.extend(rows)
+
+    leads = [l for l in leads if l.address and l.sold_on]
+    leads.sort(key=lambda l: l.sold_on, reverse=True)
+    return leads, errors

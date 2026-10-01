@@ -596,6 +596,212 @@ def _run_campaign(job_id, req: CampaignRequest):
         s.close()
 
 
+class PullRequest(BaseModel):
+    """One month of sales, across every county. The contractor's calendar."""
+    year: int
+    month: int
+    min_price: int = 700_000
+    limit_per_county: int = 800
+
+
+def _run_pull(job_id, req: PullRequest):
+    """Fetch a month of sales and add them as leads. No model calls."""
+    from curbside.sources import sold
+
+    job = _JOBS[job_id]
+    steps = []
+
+    def running(label):
+        steps.append({"label": label, "state": "running", "detail": ""})
+        job["steps"] = steps
+
+    def finish(detail=""):
+        if steps:
+            steps[-1]["state"] = "done"
+            steps[-1]["detail"] = detail
+        job["steps"] = steps
+
+    s = _store()
+    try:
+        settings.ensure_dirs()
+        supp = load_suppression(settings.suppression_file)
+
+        running(f"Pulling {req.year}-{req.month:02d} sales from county records")
+        leads, errors = sold.pull_month(req.year, req.month,
+                                        min_price=req.min_price,
+                                        limit_per_county=req.limit_per_county)
+        finish(f"{len(leads)} sold over ${req.min_price:,}")
+        job["county_errors"] = errors
+
+        running("Adding to the lead sheet")
+        added = skipped = suppressed = 0
+        for l in leads:
+            addr = l.as_address()
+            if is_suppressed(addr, supp):
+                suppressed += 1
+                continue
+            lead_id, created = s.add_lead(addr)
+            if created:
+                s.advance(lead_id, "discovered", lead_source="sold_list",
+                          note=f"{l.county} · sold {l.sold_on} · ${l.price:,.0f}")
+                added += 1
+            else:
+                skipped += 1
+        finish(f"{added} new, {skipped} already known"
+               + (f", {suppressed} suppressed" if suppressed else ""))
+
+        job.update(status="completed", stage="done",
+                   added=added, skipped=skipped)
+    except Exception as e:
+        if steps:
+            steps[-1]["state"] = "error"
+            steps[-1]["detail"] = str(e)[:160]
+        job.update(status="failed", error=f"{type(e).__name__}: {e}"[:300],
+                   steps=steps)
+    finally:
+        s.close()
+
+
+@app.post("/pull", tags=["leads"])
+def start_pull(req: PullRequest, background: BackgroundTasks):
+    """Pull one month of sales into the lead sheet."""
+    import uuid
+    job_id = uuid.uuid4().hex[:12]
+    _JOBS[job_id] = {"id": job_id, "status": "running", "stage": "pulling",
+                     "steps": [], "lead_ids": []}
+    background.add_task(_run_pull, job_id, req)
+    return {"job_id": job_id, "status": "running"}
+
+
+class GenerateRequest(BaseModel):
+    """Work the queue: take the next N leads and carry them to a postcard."""
+    limit: int = 25
+
+
+def _run_generate(job_id, req: GenerateRequest):
+    """Image -> qualify -> render -> compose, for the next N waiting leads.
+
+    The campaign endpoint does this for one ZIP's worth of leads it just
+    created. This does it for whatever is already in the sheet, which is how a
+    contractor actually works - pull a month once, then grind through it in
+    batches as budget allows.
+    """
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    ra = _return_address()
+    job = _JOBS[job_id]
+    steps = []
+
+    def running(label):
+        steps.append({"label": label, "state": "running", "detail": ""})
+        job["steps"] = steps
+
+    def finish(detail=""):
+        if steps:
+            steps[-1]["state"] = "done"
+            steps[-1]["detail"] = detail
+        job["steps"] = steps
+
+    s = _store()
+    try:
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+        if not ra:
+            raise RuntimeError("return address not configured")
+        settings.ensure_dirs()
+        budget = pipeline.Budget(s, settings.budget_usd)
+
+        # Whatever is furthest along gets finished first, so a batch that was
+        # interrupted resumes rather than starting new work beside it.
+        ids = [r["id"] for r in s.ready_for("discovered", req.limit)]
+        job["lead_ids"] = ids
+
+        if ids:
+            running(f"Photographing {len(ids)} homes")
+            r = pipeline.image(s, log=lambda *_: None, only=ids)
+            finish(f"{r['imaged']} imaged, {r['failed']} no coverage")
+
+            running("Checking which have room for a driveway")
+            r = pipeline.qualify(s, key, budget, log=lambda *_: None, only=ids)
+            finish(f"{r['passed']} candidates, {r['rejected']} skipped")
+        else:
+            finish("nothing waiting")
+
+        ready = [r["id"] for r in s.ready_for("qualified", req.limit)]
+        if ready:
+            running(f"Designing {len(ready)} driveways")
+            r = pipeline.render(s, key, budget, log=lambda *_: None, only=ready)
+            finish(f"{r['rendered']} passed, {r['failed']} rejected by QC")
+
+            running("Laying out postcards")
+            r = pipeline.compose(s, ra, log=lambda *_: None, only=ready)
+            finish(f"{r['composed']} ready for review")
+
+        job.update(status="completed", stage="done")
+    except Exception as e:
+        if steps:
+            steps[-1]["state"] = "error"
+            steps[-1]["detail"] = str(e)[:160]
+        job.update(status="failed", error=f"{type(e).__name__}: {e}"[:300],
+                   steps=steps)
+    finally:
+        s.close()
+
+
+@app.post("/generate", tags=["leads"])
+def start_generate(req: GenerateRequest, background: BackgroundTasks):
+    """Carry the next N waiting leads through to a postcard."""
+    import uuid
+    job_id = uuid.uuid4().hex[:12]
+    _JOBS[job_id] = {"id": job_id, "status": "running", "stage": "generating",
+                     "steps": [], "lead_ids": []}
+    background.add_task(_run_generate, job_id, req)
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/sheet", tags=["leads"])
+def lead_sheet(
+    state: Optional[str] = Query(None, description="filter to one state"),
+    q: Optional[str] = Query(None, description="address substring"),
+    limit: int = Query(200, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """The lead sheet: counts plus a page of rows.
+
+    One call rather than two, because the counts and the rows are read
+    together every time the table renders and a second round trip just makes
+    the header flicker.
+    """
+    s = _store()
+    try:
+        where, params = [], []
+        if state:
+            where.append("state = ?")
+            params.append(state)
+        if q:
+            where.append("address LIKE ?")
+            params.append(f"%{q}%")
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+
+        total = s.db.execute(
+            f"SELECT COUNT(*) AS n FROM leads{clause}", params).fetchone()["n"]
+        rows = s.db.execute(
+            f"SELECT * FROM leads{clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset]).fetchall()
+
+        counts = s.counts()
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "counts": counts,
+            "all": sum(counts.values()),
+            "rows": [LeadOut.from_row(r, _compliance_for(r["address"])).dict()
+                     for r in rows],
+        }
+    finally:
+        s.close()
+
+
 @app.get("/markets", tags=["pipeline"])
 def markets():
     """Counties whose records can be searched by ZIP."""

@@ -247,3 +247,52 @@ def test_sold_lookup_shape_is_stable(client, monkeypatch):
         assert field in row, f"{field} is part of the published shape"
     assert row["sold_on"] == "2026-09-10"
     assert row["address"] == "900 DIPLOMAT PKWY, FL 33019"
+
+
+def test_sheet_returns_counts_and_rows_together(client):
+    """The header counters and the table are read on every render, so one
+    call rather than two - a second round trip just makes the header flicker
+    behind the body."""
+    d = client.get("/sheet", params={"limit": 5}).json()
+    for field in ("total", "offset", "limit", "counts", "all", "rows"):
+        assert field in d
+    assert d["all"] == sum(d["counts"].values())
+
+
+def test_sheet_filters_by_state(client):
+    from curbside.store import Store
+    from curbside.config import settings
+    s = Store(settings.db_path)
+    try:
+        lid, _ = s.add_lead("1 Sheet St, Miami, FL 33156")
+        s.advance(lid, "discovered")
+    finally:
+        s.close()
+
+    d = client.get("/sheet", params={"state": "discovered"}).json()
+    assert d["total"] >= 1
+    assert all(r["state"] == "discovered" for r in d["rows"])
+
+
+def test_sheet_search_matches_an_address(client):
+    from curbside.store import Store
+    from curbside.config import settings
+    s = Store(settings.db_path)
+    try:
+        s.add_lead("4242 Needle Haystack Rd, Miami, FL 33156")
+    finally:
+        s.close()
+
+    d = client.get("/sheet", params={"q": "Needle Haystack"}).json()
+    assert d["total"] == 1
+    assert "Needle Haystack" in d["rows"][0]["address"]
+
+
+def test_pull_rejects_an_impossible_month(client, monkeypatch):
+    """A pull runs for half a minute across three counties, so a bad month
+    should fail immediately rather than after the fetch."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    r = client.post("/pull", json={"year": 2026, "month": 13})
+    assert r.status_code == 200
+    status = client.get(f"/scan/{r.json()['job_id']}").json()
+    assert status["status"] == "failed"

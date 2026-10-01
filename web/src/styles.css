@@ -327,3 +327,112 @@ button.ghost { color: var(--muted); }
   .modes button { flex: 1; padding: .5rem .4rem; }
   .filters { gap: .7rem; }
 }
+
+/* ---------- lead sheet ----------
+   A working table, not a gallery. The counters are filters, the three action
+   cards are the workflow in order, and the rows carry what the county record
+   said so a contractor can judge a lead without opening it. */
+.sheet { max-width: 1400px; margin: 0 auto; padding: 1.4rem 1.2rem 3rem; }
+
+.sheet-head { display: flex; align-items: flex-start; gap: 1.5rem; }
+.sheet-head h1 { margin: 0 0 .3rem; font-size: 1.5rem; letter-spacing: -.02em; }
+.sheet-head p { margin: 0; color: var(--muted); font-size: .88rem; max-width: 62ch; }
+.sheet-head .asLink { margin-left: auto; white-space: nowrap; }
+
+.counters { display: flex; flex-wrap: wrap; gap: .4rem; margin: 1.2rem 0 1rem; }
+.counters button {
+  background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+  border-radius: 999px; padding: .34rem .85rem; font: inherit; font-size: .83rem;
+  cursor: pointer;
+}
+.counters button b { color: var(--fg); margin-left: .3rem; }
+.counters button.on { border-color: var(--accent); color: var(--fg); }
+.counters button:hover { border-color: var(--muted); }
+
+.actions-row {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: .8rem; margin-bottom: 1rem;
+}
+.action-card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 9px; padding: .9rem 1rem;
+}
+.action-card h4 { margin: 0 0 .35rem; font-size: .9rem; }
+.action-card p { margin: 0 0 .7rem; color: var(--muted); font-size: .82rem; min-height: 2.6em; }
+.action-card .controls { display: flex; gap: .4rem; flex-wrap: wrap; }
+.action-card select, .action-card button {
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: .4rem .6rem; font: inherit; font-size: .83rem;
+  cursor: pointer;
+}
+.action-card button.primary {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+.action-card button:disabled { opacity: .45; cursor: default; }
+
+.job-strip {
+  display: flex; flex-wrap: wrap; gap: .9rem; padding: .6rem .9rem;
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 6px;
+  font-size: .82rem; margin-bottom: 1rem;
+}
+.job-strip.completed { border-left-color: #2f7d55; }
+.job-strip.failed { border-left-color: #b3261e; }
+.job-step { color: var(--muted); }
+.job-step.done { color: var(--fg); }
+.job-step.error { color: #ff8b7d; }
+.job-step em { color: var(--muted); font-style: normal; }
+
+.sheet-filter { display: flex; align-items: center; gap: 1rem; margin-bottom: .6rem; }
+.sheet-filter input {
+  flex: 0 1 320px; background: var(--panel); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: .45rem .7rem; font: inherit; font-size: .85rem;
+}
+.sheet-filter .showing { color: var(--muted); font-size: .82rem; }
+
+.table-wrap {
+  border: 1px solid var(--line); border-radius: 9px; overflow: auto;
+  background: var(--panel);
+}
+table.leads { width: 100%; border-collapse: collapse; font-size: .85rem; }
+table.leads th {
+  text-align: left; padding: .6rem .8rem; font-size: .74rem;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+  position: sticky; top: 0; background: var(--panel);
+}
+table.leads td { padding: .55rem .8rem; border-bottom: 1px solid var(--line); }
+table.leads tr:last-child td { border-bottom: none; }
+table.leads tr:hover td { background: rgba(255,255,255,.025); }
+table.leads .addr { font-weight: 500; }
+table.leads .num { text-align: right; font-variant-numeric: tabular-nums; }
+table.leads .dim { color: var(--muted); }
+table.leads .empty { text-align: center; color: var(--muted); padding: 2.4rem; }
+table.leads tr.has-card .addr { color: #7ee2a8; }
+table.leads a { color: var(--accent); }
+
+[class^="chip-"] {
+  display: inline-block; padding: .14rem .5rem; border-radius: 999px;
+  font-size: .73rem; background: #2a2f3a; color: var(--muted);
+}
+.chip-composed, .chip-approved { background: #14532d; color: #bbf7d0; }
+.chip-mailed { background: #1e3a5f; color: #bfdbfe; }
+.chip-failed { background: #4a1d1d; color: #fecaca; }
+.chip-discovered { background: #3a3320; color: #fde68a; }
+
+.pager {
+  display: flex; align-items: center; gap: 1rem; justify-content: center;
+  margin-top: 1rem; font-size: .84rem; color: var(--muted);
+}
+.pager button {
+  background: var(--panel); border: 1px solid var(--line); color: var(--fg);
+  border-radius: 6px; padding: .35rem .8rem; font: inherit; cursor: pointer;
+}
+.pager button:disabled { opacity: .4; cursor: default; }
+
+@media (max-width: 900px) {
+  .actions-row { grid-template-columns: 1fr; }
+  .sheet-head { flex-direction: column; gap: .6rem; }
+  .sheet-head .asLink { margin-left: 0; }
+}
