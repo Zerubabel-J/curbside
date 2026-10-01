@@ -299,11 +299,20 @@ mature trees, water or a boundary wall with no room to build.
 Score `condition` 1-10 for any existing paving, where 1 is pristine and 10 is
 badly broken. A pristine driveway still qualifies - the offer is an upgrade.
 
-Recommend `best_shape`:
-  `resurface` - a good driveway in the wrong material
-  `circular`  - wide open frontage, room for a full loop with an island
-  `teardrop`  - moderate frontage, room for a turning court but not a loop
-  `widened`   - a narrow driveway with lawn beside it to grow into"""
+Recommend `best_shape`. Prefer a NEW SHAPE wherever the lot allows one - the
+offer being sold is a rebuilt driveway, not a recoloured one, and a homeowner
+who sees the same outline in a different material has been shown nothing worth
+paying for. Resurfacing is the fallback, not the default.
+
+  `circular`  - the frontage is 3 cars wide or more with open lawn: build a
+                full loop with a planted island. Prefer this whenever it fits.
+  `teardrop`  - the frontage is 2-3 cars wide with some lawn: build a turning
+                court that enters and leaves by the same point.
+  `widened`   - a narrow drive hemmed in by trees, water or a boundary, but
+                with lawn on one side to grow into.
+  `resurface` - choose this ONLY when there is genuinely no room to change the
+                footprint: the house sits hard against the road, or every
+                side is blocked by mature planting, water or a wall."""
 
 
 QUALIFY_SCHEMA = {
