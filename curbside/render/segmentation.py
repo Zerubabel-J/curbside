@@ -238,7 +238,7 @@ def segment(image_path, key=None, model=None, strategy="grounded", prompt=None):
                   "coverage": round(float(mask.mean()), 4), "cost": 0.0}
 
 
-def centred_enough(prior_mask, max_offset=0.30, min_edge_gap=0.02):
+def centred_enough(prior_mask, max_offset=0.42, min_edge_gap=0.02):
     """Is the segmented driveway the subject property's, or a neighbour's?
 
     Street View frames a point on the road, not a parcel, so a shot of one
@@ -248,6 +248,12 @@ def centred_enough(prior_mask, max_offset=0.30, min_edge_gap=0.02):
 
     Returns (ok, detail). Vertical position is ignored - a driveway correctly
     runs from the bottom edge toward the house.
+
+    The threshold is deliberately generous. A corner lot, a wide frontage or a
+    camera that stopped slightly past the house all push a perfectly good
+    driveway toward x=0.15 or x=0.85, and measured on real Florida blocks a
+    tighter bound rejected more true driveways than neighbours' ones. Only a
+    region hard against the frame edge is confidently somebody else's.
     """
     import numpy as _np
     if prior_mask is None or prior_mask.mean() < 0.002:
@@ -320,16 +326,26 @@ def consensus_mask(before_path, after_path, prior_mask, threshold=26,
 
     consensus = diff_mask * (prior_d > 0.3)
 
-    # If the prior rejects nearly everything the diff found, trust the diff -
-    # the polygon was probably in the wrong place entirely.
+    # `kept` is the share of the render's change that fell inside the driveway.
+    # A low value does not by itself mean the prior was wrong: repainting a
+    # surface also shifts light across the frame, so the diff can be far larger
+    # than the driveway while the intersection is still exactly right.
+    #
+    # What matters is whether the consensus region is itself a plausible
+    # driveway. If it is, use it - that is the mask doing its job, discarding
+    # the model's incidental changes. Only when the intersection collapses to
+    # almost nothing has the prior genuinely missed.
     kept = consensus.sum() / max(diff_mask.sum(), 1.0)
-    if kept < 0.25:
+    consensus_frac = float(consensus.mean())
+
+    if consensus_frac < 0.005:
         if require_prior:
             return None, {"mode": "refused",
-                          "reason": f"driveway prior kept only {kept:.0%} of "
-                                    "the change - the render moved something else",
-                          "prior_coverage": round(float(prior_mask.mean()), 4)}
-        return diff_mask, {"mode": "diff-only", "reason": f"prior kept only {kept:.0%}",
+                          "reason": f"driveway prior and the render overlap in "
+                                    f"only {consensus_frac:.1%} of the frame",
+                          "prior_coverage": round(float(prior_mask.mean()), 4),
+                          "diff_kept": round(float(kept), 3)}
+        return diff_mask, {"mode": "diff-only", "reason": "consensus too small",
                            "prior_coverage": round(float(prior_mask.mean()), 4)}
 
     return consensus, {

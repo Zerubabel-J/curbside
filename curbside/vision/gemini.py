@@ -339,14 +339,17 @@ exactly as it arrived."""),
 ]
 
 
-def qualify(img_path, key, model=QUALIFY_MODEL, prompt=None):
+def qualify(img_path, key, model=QUALIFY_MODEL, prompt=None, schema=None):
+    """Judge one property. `schema` travels with `prompt` - a prompt that asks
+    different questions needs the response shape to match, or the fields it
+    reports are silently dropped."""
     b64 = base64.b64encode(pathlib.Path(img_path).read_bytes()).decode()
     resp, err = _post({
         "model": model,
         "input": [{"type": "text", "text": prompt or QUALIFY_PROMPT},
                   {"type": "image", "mime_type": "image/jpeg", "data": b64}],
         "response_format": {"type": "text", "mime_type": "application/json",
-                            "schema": QUALIFY_SCHEMA},
+                            "schema": schema or QUALIFY_SCHEMA},
     }, key)
     if err:
         return None, err, 0.0

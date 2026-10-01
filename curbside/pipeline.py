@@ -187,11 +187,22 @@ def qualify(store, key, budget, limit=None, log=print, workers=None, only=None):
     workers = workers or settings.workers
     budget.check(0.001 * len(leads))
 
-    prompt = gemini.STREET_QUALIFY_PROMPT if settings.street_view else None
+    # Street level uses the shape-aware qualifier: it reports how much open
+    # frontage the lot has and recommends a driveway shape, rather than only
+    # asking whether paving already exists. A home with a front walkway and an
+    # open lawn is a candidate for a circular driveway, which the earlier
+    # prompt rejected outright.
+    if settings.street_view:
+        from curbside.vision import driveways
+        prompt = driveways.qualify_prompt()
+        schema = driveways.QUALIFY_SCHEMA
+    else:
+        prompt, schema = None, None
 
     def call(lead):
         return lead, gemini.qualify(lead["before_path"], key,
-                                    model=settings.qualify_model, prompt=prompt)
+                                    model=settings.qualify_model,
+                                    prompt=prompt, schema=schema)
 
     results = []
     if workers > 1 and len(leads) > 1:
@@ -208,30 +219,28 @@ def qualify(store, key, budget, limit=None, log=print, workers=None, only=None):
             log(f"  [{lead['id']}] qualify failed: {err[:80]}")
             failed += 1
             continue
-        # A front walkway reads like a driveway from the kerb, and the model
-        # will call it one. The physical test overrides its verdict: a strip
-        # that takes no car and never meets the road is a footpath, and
-        # paving it produces a postcard showing a paved garden.
+        # A home with only a front walkway used to be rejected here as "not a
+        # driveway". That was backwards: an open frontage with no paving is
+        # the best candidate there is for a new circular driveway, which is
+        # the work the product sells. The shape-aware qualifier decides, and
+        # the only hard gate left is whether the frontage can be seen at all.
         if settings.street_view and q.get("qualified"):
-            cars = q.get("cars_wide")
-            if cars is not None and cars < 1:
+            if q.get("frontage_clear") is False:
                 q = {**q, "qualified": False,
-                     "reason": f"paved strip takes {cars} cars - a walkway, "
-                               "not a driveway"}
-            elif q.get("meets_road") is False:
-                q = {**q, "qualified": False,
-                     "reason": "paved strip does not meet the road - "
-                               "a walkway, not a driveway"}
+                     "reason": "the frontage is hidden from the road"}
+
+        cond = q.get("condition", q.get("condition_score", 0))
+        shape = q.get("best_shape", "resurface")
 
         if not q["qualified"]:
             store.advance(lead["id"], "rejected", note=q["reason"], qualification=q)
-            log(f"  [{lead['id']}] REJECT  {q['surface']} "
-                f"cond={q['condition_score']}/10 — {q['reason'][:52]}")
+            log(f"  [{lead['id']}] REJECT  {q.get('surface','?')} "
+                f"cond={cond}/10 — {q['reason'][:52]}")
             rejected += 1
             continue
         store.advance(lead["id"], "qualified", qualification=q)
-        log(f"  [{lead['id']}] PASS    {q['surface']} "
-            f"cond={q['condition_score']}/10 obs={q['obstruction']}")
+        log(f"  [{lead['id']}] PASS    {q.get('surface','?')} "
+            f"cond={cond}/10 -> {shape}")
         passed += 1
     return {"passed": passed, "rejected": rejected, "failed": failed}
 
@@ -342,12 +351,28 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
                     return base
 
             # Vary the surface per lead so a block of postcards does not look
-            # like one postcard five times, and so the material suits the
-            # house. Keyed on the lead id, so a retry keeps the same offer.
+            # like one postcard five times. Keyed on the lead id, so a retry
+            # keeps the same offer.
+            #
+            # The shape comes from the qualifier, which looks at the frontage
+            # and says whether this house can take a circular or teardrop
+            # driveway or should simply be resurfaced. Reshaping is the point
+            # of the product - a resurfaced driveway is the same driveway in a
+            # different colour, and the client was explicit that he wants the
+            # footprint changed where the lot allows it.
             if settings.street_view:
-                material = gemini.material_for(lead["id"])
-                base["material"] = material[0]
-                ladder = gemini.street_render_ladder(material)
+                from curbside.vision import driveways
+                design = driveways.DESIGN_KEYS[
+                    lead["id"] % len(driveways.DESIGN_KEYS)]
+                q = lead["qualification"] or {}
+                if isinstance(q, str):
+                    q = json.loads(q)
+                shape = q.get("best_shape") or "resurface"
+                if shape not in driveways.SHAPES:
+                    shape = "resurface"
+                base["material"] = design
+                base["shape"] = shape
+                ladder = driveways.render_ladder(design, shape)
             else:
                 ladder = gemini.RENDER_LADDER
             last = None

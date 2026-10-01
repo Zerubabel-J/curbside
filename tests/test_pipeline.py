@@ -387,17 +387,21 @@ def test_street_qualify_uses_the_street_prompt(store, street, monkeypatch, tmp_p
 
     seen = {}
 
-    def fake_qualify(path, key, model=None, prompt=None):
+    def fake_qualify(path, key, model=None, prompt=None, schema=None):
         seen["prompt"] = prompt
-        return {"qualified": False, "surface": "none", "condition_score": 10,
-                "reason": "no driveway", "obstruction": "none"}, None, 0.0009
+        seen["schema"] = schema
+        return {"qualified": False, "surface": "none", "condition": 10,
+                "reason": "no driveway", "best_shape": "resurface"}, None, 0.0009
     monkeypatch.setattr("curbside.pipeline.gemini.qualify", fake_qualify)
 
     lid, _ = store.add_lead("1 SW 1st St, Miami, FL 33130")
     store.advance(lid, "imaged", before_path=str(tmp_path / "b.jpg"))
 
     pipeline.qualify(store, "k", pipeline.Budget(store, cap=1.0), log=lambda *_: None)
-    assert seen["prompt"] is gemini.STREET_QUALIFY_PROMPT
+    # Street level asks a different question - how much frontage is there and
+    # what shape suits it - so the prompt and its response schema both change.
+    assert "circular driveway" in seen["prompt"]
+    assert "best_shape" in seen["schema"]["properties"]
 
 
 def test_aerial_qualify_leaves_the_prompt_at_its_default(store, monkeypatch, tmp_path):
@@ -406,10 +410,11 @@ def test_aerial_qualify_leaves_the_prompt_at_its_default(store, monkeypatch, tmp
 
     seen = {}
 
-    def fake_qualify(path, key, model=None, prompt=None):
+    def fake_qualify(path, key, model=None, prompt=None, schema=None):
         seen["prompt"] = prompt
-        return {"qualified": False, "surface": "none", "condition_score": 10,
-                "reason": "no driveway", "obstruction": "none"}, None, 0.0009
+        seen["schema"] = schema
+        return {"qualified": False, "surface": "none", "condition": 10,
+                "reason": "no driveway", "best_shape": "resurface"}, None, 0.0009
     monkeypatch.setattr("curbside.pipeline.gemini.qualify", fake_qualify)
 
     lid, _ = store.add_lead("1 A St, Indianapolis, IN 46201")

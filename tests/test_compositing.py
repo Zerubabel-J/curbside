@@ -207,7 +207,13 @@ def test_neighbours_driveway_is_rejected_by_position():
     ok, _ = centred_enough(strip(38, 62))
     assert ok, "a centred driveway must pass"
 
-    for x0, x1 in ((82, 100), (0, 18)):
+    # A corner lot or a wide frontage puts a real driveway well off centre, so
+    # only a region hard against the frame edge is confidently a neighbour's.
+    for x0, x1 in ((8, 24), (78, 94)):
+        ok, _ = centred_enough(strip(x0, x1))
+        assert ok, "an off-centre driveway on a wide lot is still this property's"
+
+    for x0, x1 in ((92, 100), (0, 8)):
         ok, detail = centred_enough(strip(x0, x1))
         assert not ok and "centre" in detail["reason"]
 

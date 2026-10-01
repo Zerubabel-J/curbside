@@ -1,0 +1,198 @@
+{
+  "1047_s_southlake_dr_hollywood_fl_33019": {
+    "address": "1047 S Southlake Dr, Hollywood, FL 33019",
+    "captured": "2011-04",
+    "distance_m": 46.5,
+    "kind": "florida",
+    "precision": "ROOFTOP"
+  },
+  "11100_sw_73_ct_pinecrest_fl_33156": {
+    "address": "11100 SW 73 Ct, Pinecrest, FL 33156",
+    "captured": "2025-03",
+    "distance_m": 23.3,
+    "kind": "florida",
+    "precision": "ROOFTOP"
+  },
+  "1237_garfield_st_hollywood_fl_33019": {
+    "address": "1237 Garfield St, Hollywood, FL 33019",
+    "captured": "2011-04",
+    "distance_m": 17.6,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "1246_adams_st_hollywood_fl_33019": {
+    "address": "1246 Adams St, Hollywood, FL 33019",
+    "captured": "2025-08",
+    "distance_m": 23.1,
+    "kind": "florida",
+    "precision": "ROOFTOP"
+  },
+  "1316_madison_st_hollywood_fl_33019": {
+    "address": "1316 Madison St, Hollywood, FL 33019",
+    "captured": "2022-07",
+    "distance_m": 20.6,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "18_w_54th_st_indianapolis_in_46208": {
+    "address": "18 W 54th St, Indianapolis, IN 46208",
+    "captured": "2024-09",
+    "distance_m": 24.2,
+    "kind": "walkway",
+    "precision": "ROOFTOP"
+  },
+  "2036_amesbury_cir_wellington_fl_33414": {
+    "address": "2036 Amesbury Cir, Wellington, FL 33414",
+    "captured": "2022-03",
+    "distance_m": 25.6,
+    "kind": "wide",
+    "precision": "ROOFTOP"
+  },
+  "220_esplanade_way_palm_beach_fl_33480": {
+    "address": "220 Esplanade Way, Palm Beach, FL 33480",
+    "captured": "2024-03",
+    "distance_m": 22.5,
+    "kind": "wide",
+    "precision": "ROOFTOP"
+  },
+  "240_tangier_ave_palm_beach_fl_33480": {
+    "address": "240 Tangier Ave, Palm Beach, FL 33480",
+    "captured": "2024-03",
+    "distance_m": 32.4,
+    "kind": "wide",
+    "precision": "ROOFTOP"
+  },
+  "260_everglade_ave_palm_beach_fl_33480": {
+    "address": "260 Everglade Ave, Palm Beach, FL 33480",
+    "captured": "2014-04",
+    "distance_m": 25.5,
+    "kind": "wide",
+    "precision": "ROOFTOP"
+  },
+  "296_wychmere_ter_wellington_fl_33414": {
+    "address": "296 Wychmere Ter, Wellington, FL 33414",
+    "captured": "2024-03",
+    "distance_m": 40.6,
+    "kind": "wide",
+    "precision": "ROOFTOP"
+  },
+  "3050_n_meridian_st_indianapolis_in_46208": {
+    "address": "3050 N Meridian St, Indianapolis, IN 46208",
+    "captured": "2024-09",
+    "distance_m": 46.4,
+    "kind": "wide",
+    "precision": "ROOFTOP"
+  },
+  "332_balboa_st_hollywood_fl_33019": {
+    "address": "332 Balboa St, Hollywood, FL 33019",
+    "captured": "2025-08",
+    "distance_m": 18.3,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "5355_n_kenwood_ave_indianapolis_in_46208": {
+    "address": "5355 N Kenwood Ave, Indianapolis, IN 46208",
+    "captured": "2024-06",
+    "distance_m": 27.0,
+    "kind": "worn",
+    "precision": "ROOFTOP"
+  },
+  "5363_n_kenwood_ave_indianapolis_in_46208": {
+    "address": "5363 N Kenwood Ave, Indianapolis, IN 46208",
+    "captured": "2024-06",
+    "distance_m": 24.4,
+    "kind": "walkway",
+    "precision": "ROOFTOP"
+  },
+  "5761_central_ave_indianapolis_in_46220": {
+    "address": "5761 Central Ave, Indianapolis, IN 46220",
+    "captured": "2024-10",
+    "distance_m": 46.9,
+    "kind": "worn",
+    "precision": "ROOFTOP"
+  },
+  "5789_central_ave_indianapolis_in_46220": {
+    "address": "5789 Central Ave, Indianapolis, IN 46220",
+    "captured": "2022-09",
+    "distance_m": 17.5,
+    "kind": "walkway",
+    "precision": "ROOFTOP"
+  },
+  "5845_n_new_jersey_st_indianapolis_in_46220": {
+    "address": "5845 N New Jersey St, Indianapolis, IN 46220",
+    "captured": "2022-09",
+    "distance_m": 21.2,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "742_hollywood_blvd_hollywood_fl_33019": {
+    "address": "742 Hollywood Blvd, Hollywood, FL 33019",
+    "captured": "2025-08",
+    "distance_m": 21.4,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "7825_sw_128_st_pinecrest_fl_33156": {
+    "address": "7825 SW 128 St, Pinecrest, FL 33156",
+    "captured": "2025-03",
+    "distance_m": 42.0,
+    "kind": "florida",
+    "precision": "ROOFTOP"
+  },
+  "8102_talliho_dr_indianapolis_in_46256": {
+    "address": "8102 Talliho Dr, Indianapolis, IN 46256",
+    "captured": "2024-09",
+    "distance_m": 23.2,
+    "kind": "worn",
+    "precision": "RANGE_INTERPOLATED"
+  },
+  "8113_talliho_dr_indianapolis_in_46256": {
+    "address": "8113 Talliho Dr, Indianapolis, IN 46256",
+    "captured": "2024-09",
+    "distance_m": 22.6,
+    "kind": "worn",
+    "precision": "ROOFTOP"
+  },
+  "8142_foxchase_dr_indianapolis_in_46256": {
+    "address": "8142 Foxchase Dr, Indianapolis, IN 46256",
+    "captured": "2024-09",
+    "distance_m": 22.1,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "8160_foxchase_dr_indianapolis_in_46256": {
+    "address": "8160 Foxchase Dr, Indianapolis, IN 46256",
+    "captured": "2024-09",
+    "distance_m": 22.7,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "8730_sw_34th_st_miami_fl_33165": {
+    "address": "8730 SW 34th St, Miami, FL 33165",
+    "captured": "2026-05",
+    "distance_m": 19.1,
+    "kind": "florida",
+    "precision": "RANGE_INTERPOLATED"
+  },
+  "8889_sw_78_ct_miami_fl_33156": {
+    "address": "8889 SW 78 Ct, Miami, FL 33156",
+    "captured": "2018-12",
+    "distance_m": 26.0,
+    "kind": "florida",
+    "precision": "ROOFTOP"
+  },
+  "900_diplomat_pkwy_hollywood_fl_33019": {
+    "address": "900 Diplomat Pkwy, Hollywood, FL 33019",
+    "captured": "2025-08",
+    "distance_m": 22.0,
+    "kind": "straight",
+    "precision": "ROOFTOP"
+  },
+  "95_w_54th_st_indianapolis_in_46208": {
+    "address": "95 W 54th St, Indianapolis, IN 46208",
+    "captured": "2020-04",
+    "distance_m": 35.6,
+    "kind": "walkway",
+    "precision": "ROOFTOP"
+  }
+}
