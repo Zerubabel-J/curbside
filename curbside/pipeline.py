@@ -10,7 +10,7 @@ from curbside.sources.geocode import geocode
 from curbside.sources.imagery import fetch
 from curbside.vision import gemini
 from curbside.render.compositing import (composite, qc, save_mask_preview,
-                                        ground_mask,
+                                        ground_mask, facade_change,
                                          verify_region, verify_region_street)
 from curbside.render.segmentation import (segment, consensus_mask,
                                         centred_enough)
@@ -297,6 +297,23 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
             mask = ground_mask(lead["before_path"], raw)
             mask_meta = {"mode": "ground-plane", "shape": shape}
             max_mask, max_outside = 0.90, 1.0
+
+            # The ground mask bounds a reshape geometrically, which protects
+            # the sky and roofline but not the facade: the model can push the
+            # house into the background and rebuild the lot in front of it,
+            # and every geometric check still passes. Measured on real
+            # renders, recomposed scenes change 22-43% of the facade band
+            # while faithful ones change 1-8%.
+            face = facade_change(lead["before_path"], raw)
+            mask_meta["facade_change"] = round(face, 3)
+            if face > 0.15:
+                out["report"] = {
+                    "passed": False, "mask": mask_meta,
+                    "segmentation": seg_meta, "attempt": tag,
+                    "reasons": [f"the house itself changed ({face:.0%}) - "
+                                "the render rebuilt the scene rather than "
+                                "the driveway"]}
+                return out, False
         else:
             mask, mask_meta = consensus_mask(lead["before_path"], raw, prior,
                                              threshold=threshold,

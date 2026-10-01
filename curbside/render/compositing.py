@@ -26,6 +26,31 @@ def _arr(src):
     return np.asarray(im).astype(np.int16), im.size
 
 
+def facade_change(before_path, after_path, top=0.35, bottom=0.55,
+                  threshold=40):
+    """How much of the house itself changed.
+
+    Sky drift alone cannot catch the worst reshaping failure. The ground mask
+    preserves everything above the horizon by construction, so the sky can be
+    pixel-perfect while the model has pushed the house into the background and
+    rebuilt the lot in front of it - a beautiful driveway on somebody else's
+    home, which is exactly the postcard that must never be mailed.
+
+    The band between `top` and `bottom` holds the facade on a street-level
+    shot. Measured on real renders: recomposed scenes sit at 22-43% here while
+    faithful ones sit at 1-8%.
+    """
+    a, size = _arr(before_path)
+    b, _    = _arr(after_path)
+    if a.shape != b.shape:
+        b_img = Image.open(os.fspath(after_path)).convert("RGB").resize(size, Image.LANCZOS)
+        b = np.asarray(b_img).astype(np.int16)
+    h = a.shape[0]
+    d = np.abs(a - b).max(axis=2)
+    band = d[int(h * top):int(h * bottom)]
+    return float((band > threshold).mean())
+
+
 def ground_mask(before_path, after_path, horizon=0.46, threshold=40,
                 feather=6):
     """Changed region, restricted to the ground plane below `horizon`.

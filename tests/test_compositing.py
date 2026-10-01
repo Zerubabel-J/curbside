@@ -298,3 +298,31 @@ def test_a_box_mixing_conventions_still_resolves():
     from curbside.render.segmentation import box_to_mask
     m = box_to_mask({"x0": 0.0, "y0": 743, "x1": 1.0, "y1": 1.0}, (640, 640))
     assert 0.15 < m.mean() < 0.40
+
+
+def test_facade_change_catches_a_rebuilt_scene():
+    """A reshape is bounded by the ground plane, which protects the sky and
+    roofline but not the house. Two postcards reached the review queue showing
+    a beautiful driveway in front of a house that had been pushed into the
+    background and redrawn - 89% and 92% on this measure, against 0-5% for
+    renders that kept the home."""
+    import numpy as np
+    import tempfile, pathlib
+    from PIL import Image
+    from curbside.render.compositing import facade_change
+
+    d = pathlib.Path(tempfile.mkdtemp())
+    before = np.full((200, 200, 3), 120, dtype=np.uint8)
+    before[70:110] = 200                      # the facade band
+
+    kept = before.copy()
+    kept[130:] = 90                           # only the ground changed
+    rebuilt = before.copy()
+    rebuilt[70:110] = 40                      # the house itself redrawn
+
+    pb, pk, pr = d / "b.jpg", d / "k.jpg", d / "r.jpg"
+    for arr, path in ((before, pb), (kept, pk), (rebuilt, pr)):
+        Image.fromarray(arr).save(path, quality=99)
+
+    assert facade_change(pb, pk) < 0.15, "a ground-only change must pass"
+    assert facade_change(pb, pr) > 0.15, "a redrawn facade must be caught"

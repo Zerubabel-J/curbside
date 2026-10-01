@@ -642,8 +642,13 @@ def _run_pull(job_id, req: PullRequest):
                 continue
             lead_id, created = s.add_lead(addr)
             if created:
-                s.advance(lead_id, "discovered", lead_source="sold_list",
-                          note=f"{l.county} · sold {l.sold_on} · ${l.price:,.0f}")
+                # The leads table already carries sale_date and sale_price;
+                # an earlier version packed them into a free-text note, which
+                # the API never returned and the sheet could not read.
+                s.advance(lead_id, "discovered",
+                          lead_source=l.county,
+                          sale_date=l.sold_on.isoformat() if l.sold_on else None,
+                          sale_price=l.price)
                 added += 1
             else:
                 skipped += 1

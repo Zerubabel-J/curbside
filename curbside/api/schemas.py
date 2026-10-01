@@ -28,6 +28,11 @@ class LeadOut:
     qc: Optional[dict] = None
     fail_stage: Optional[str] = None
     fail_error: Optional[str] = None
+    # What the county record said. The lead sheet shows these per row so a
+    # contractor can judge a lead without opening it.
+    sale_date: Optional[str] = None
+    sale_price: Optional[float] = None
+    lead_source: Optional[str] = None
     has_before: bool = False
     has_after: bool = False
     has_postcard: bool = False
@@ -43,6 +48,8 @@ class LeadOut:
             qualification=_load(row["qualification"]),
             qc=_load(row["qc"]),
             fail_stage=row["fail_stage"], fail_error=row["fail_error"],
+            sale_date=row["sale_date"], sale_price=row["sale_price"],
+            lead_source=row["lead_source"],
             has_before=bool(row["before_path"]),
             has_after=bool(row["after_path"]),
             has_postcard=bool(row["postcard_path"]),

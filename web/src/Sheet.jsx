@@ -38,15 +38,6 @@ function StatusChip({ state }) {
   return <span className={`chip-${state}`}>{label}</span>
 }
 
-// The note carries what the county record said, which is the only place the
-// sale price and date survive - the leads table stores an address and a state.
-function parseNote(note) {
-  if (!note) return {}
-  const m = /^(\w+)\s+·\s+sold\s+(\S+)\s+·\s+\$([\d,]+)/.exec(note)
-  if (!m) return {}
-  return { county: m[1], sold: m[2], price: Number(m[3].replace(/,/g, '')) }
-}
-
 export default function Sheet({ onOpenScan }) {
   const [data, setData] = useState(null)
   const [state, setState] = useState('')
@@ -223,16 +214,15 @@ export default function Sheet({ onOpenScan }) {
           </thead>
           <tbody>
             {rows.map(l => {
-              const n = parseNote(l.note)
               const q = l.qualification || {}
               const ok = l.state === 'composed' || l.state === 'approved'
                       || l.state === 'mailed'
               return (
                 <tr key={l.id} className={ok ? 'has-card' : ''}>
-                  <td className="dim">{n.sold || '—'}</td>
+                  <td className="dim">{l.sale_date || '—'}</td>
                   <td className="addr">{l.address}</td>
-                  <td className="dim">{(n.county || '—').replace(/_/g, '-')}</td>
-                  <td className="num">{money(n.price)}</td>
+                  <td className="dim">{(l.lead_source || '—').replace(/_/g, '-')}</td>
+                  <td className="num">{money(l.sale_price)}</td>
                   <td><StatusChip state={l.state} /></td>
                   <td className="dim">{q.best_shape || '—'}</td>
                   <td>
