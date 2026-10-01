@@ -4,13 +4,18 @@ import { api } from './api.js'
 // Verified against the live pipeline - each of these returns neighbours and
 // produces at least one postcard. Indiana only: that is where the 3in CC0
 // imagery is sharp enough to resolve a driveway.
+// Verified on the render bench, not chosen by postcode. Each of these
+// produced a render that kept the house pixel-identical while changing the
+// driveway - which is the only thing that makes the postcard work. The old
+// list was picked for aerial imagery and three of its six failed at street
+// level, so a demo on them showed the product at its worst.
 const EXAMPLES = [
-  { address: '5410 N Illinois St, Indianapolis, IN 46208', note: 'Meridian-Kessler · 4 of 6 qualify' },
-  { address: '8102 Talliho Dr, Indianapolis, IN 46256',    note: 'Geist suburb · 3 of 6 qualify' },
-  { address: '5802 Central Ave, Indianapolis, IN 46220',   note: 'Broad Ripple · 3 of 6 qualify' },
-  { address: '4920 N Pennsylvania St, Indianapolis, IN 46205', note: 'Historic North · 2 of 6' },
-  { address: '1240 Fairfield Ave, Indianapolis, IN 46205', note: 'Mid-century grid · 2 of 6' },
-  { address: '6301 N Keystone Ave, Indianapolis, IN 46220', note: 'Keystone · 1 of 6' },
+  { address: '2036 Amesbury Cir, Wellington, FL 33414', note: 'Open frontage · circular driveway' },
+  { address: '220 Esplanade Way, Palm Beach, FL 33480', note: 'Wide lot · circular driveway' },
+  { address: '332 Balboa St, Hollywood, FL 33019',      note: 'Straight drive · resurfaced' },
+  { address: '1316 Madison St, Hollywood, FL 33019',    note: 'Florida suburban · pavers' },
+  { address: '5363 N Kenwood Ave, Indianapolis, IN 46208', note: 'Walkway only · new driveway' },
+  { address: '900 Diplomat Pkwy, Hollywood, FL 33019',  note: 'Coastal · resurfaced' },
 ]
 
 function StepRow({ step, elapsed }) {
@@ -282,9 +287,15 @@ export default function Scan({ onDone, config }) {
               </div>
 
               <p className="try">South East Florida — Miami-Dade, Broward and
-                 Palm Beach county records. Try 33156, 33019 or 33480.</p>
+                 Palm Beach county records. Suburban ZIPs work best: the homes
+                 face the street with open frontage, so there is room to build
+                 a circular driveway.</p>
               <div className="chips">
-                {['33156', '33019', '33480', '33432', '33414'].map(z => (
+                {/* Ordered by measured yield, not by postcode. The gated
+                    estates of Palm Beach 33480 sit behind hedges and produce
+                    almost nothing from the kerb; Wellington and Weston are
+                    open-frontage suburbs and produce the best renders. */}
+                {['33414', '33019', '33327', '33186', '33156'].map(z => (
                   <button key={z} className="example" disabled={busy}
                           onClick={() => { setZip(z); startCampaign(null, z) }}>
                     <b>{z}</b>

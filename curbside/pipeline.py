@@ -10,6 +10,7 @@ from curbside.sources.geocode import geocode
 from curbside.sources.imagery import fetch
 from curbside.vision import gemini
 from curbside.render.compositing import (composite, qc, save_mask_preview,
+                                        ground_mask,
                                          verify_region, verify_region_street)
 from curbside.render.segmentation import (segment, consensus_mask,
                                         centred_enough)
@@ -268,7 +269,7 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
     workers = workers or settings.workers
     budget.check(gemini.PRICES[settings.render_model]["per_image"] * len(leads))
 
-    def attempt(lead, prior, seg_meta, prompt, tag):
+    def attempt(lead, prior, seg_meta, prompt, tag, shape="resurface"):
         """One render + both QC passes. Returns (bundle, passed)."""
         out = {"costs": []}
         raw = settings.output_dir / f"{lead['id']:06d}_raw.jpg"
@@ -283,9 +284,27 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
         # the aerial threshold captures the garden along with the driveway.
         threshold = (settings.mask_threshold_street if settings.street_view
                      else settings.mask_threshold)
-        mask, mask_meta = consensus_mask(lead["before_path"], raw, prior,
-                                         threshold=threshold,
-                                         require_prior=settings.street_view)
+
+        # Reshaping and resurfacing need different rules, and applying the
+        # resurfacing rules to a reshape is why no circular driveway ever
+        # reached a postcard: a new footprint legitimately covers 50-80% of
+        # the ground, and the 18% cap rejected every one as "changed region
+        # too large". The region a reshape may touch is the ground plane,
+        # bounded by the horizon rather than by the old paving.
+        reshaping = shape in ("circular", "teardrop", "widened")
+
+        if reshaping:
+            mask = ground_mask(lead["before_path"], raw)
+            mask_meta = {"mode": "ground-plane", "shape": shape}
+            max_mask, max_outside = 0.90, 1.0
+        else:
+            mask, mask_meta = consensus_mask(lead["before_path"], raw, prior,
+                                             threshold=threshold,
+                                             require_prior=settings.street_view)
+            max_mask = (settings.qc_max_mask_frac_street if settings.street_view
+                        else 0.45)
+            max_outside = settings.qc_max_outside_frac
+
         if mask is None:
             # Street level refuses rather than guessing: the frame holds lawn,
             # walkways and the neighbours' frontage, and a mask built from the
@@ -294,13 +313,10 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
                              "segmentation": seg_meta, "attempt": tag,
                              "reasons": [mask_meta["reason"]]}
             return out, False
-        # A street-level driveway covers a predictable slice of the frame, so
-        # the size bound is tighter there than from above.
-        max_mask = (settings.qc_max_mask_frac_street if settings.street_view
-                    else 0.45)
+
         report = qc(lead["before_path"], raw, mask,
                     drift_threshold=threshold,
-                    max_outside_frac=settings.qc_max_outside_frac,
+                    max_outside_frac=max_outside,
                     max_mask_frac=max_mask)
         report["segmentation"] = seg_meta
         report["mask"] = mask_meta
@@ -313,13 +329,21 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
         if not report["passed"]:
             return out, False
 
-        check = verify_region_street if settings.street_view else verify_region
-        sem, sem_err, sem_cost = check(lead["before_path"], preview, key)
-        out["costs"].append(("qc", sem_cost, settings.qualify_model))
-        report["semantic"] = sem if not sem_err else {"error": sem_err}
-        out["semantic"] = (sem, sem_err)
-        if sem and not sem_err and not sem.get("is_driveway"):
-            return out, False
+        # The semantic check asks whether the highlighted region *is already*
+        # a driveway, which is the right question when resurfacing one and the
+        # wrong question when building one. A reshape deliberately paves lawn,
+        # so the region it highlights was grass in the photograph the model is
+        # being asked about - and the check rejects every one of them. The
+        # ground mask already bounds a reshape geometrically; the facade is
+        # what needs watching there, and `qc` measures that.
+        if not reshaping:
+            check = verify_region_street if settings.street_view else verify_region
+            sem, sem_err, sem_cost = check(lead["before_path"], preview, key)
+            out["costs"].append(("qc", sem_cost, settings.qualify_model))
+            report["semantic"] = sem if not sem_err else {"error": sem_err}
+            out["semantic"] = (sem, sem_err)
+            if sem and not sem_err and not sem.get("is_driveway"):
+                return out, False
         return out, True
 
     def work(lead):
@@ -377,7 +401,8 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
                 ladder = gemini.RENDER_LADDER
             last = None
             for tag, prompt in ladder[:settings.render_attempts]:
-                out, passed = attempt(lead, prior, seg_meta, prompt, tag)
+                out, passed = attempt(lead, prior, seg_meta, prompt, tag,
+                                      shape=base.get("shape", "resurface"))
                 base["costs"].extend(out.pop("costs", []))
                 last = {**base, **out}
                 if passed:
