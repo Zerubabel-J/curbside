@@ -291,11 +291,18 @@ export default function Scan({ onDone, config }) {
                  face the street with open frontage, so there is room to build
                  a circular driveway.</p>
               <div className="chips">
-                {/* Ordered by measured yield, not by postcode. The gated
-                    estates of Palm Beach 33480 sit behind hedges and produce
-                    almost nothing from the kerb; Wellington and Weston are
-                    open-frontage suburbs and produce the best renders. */}
-                {['33414', '33019', '33327', '33186', '33156'].map(z => (
+                {/* Ordered by measured Street View coverage, which is what
+                    actually decides whether a ZIP produces postcards:
+
+                       33019 Hollywood   92%   open street grid
+                       33186 Miami       80%   suburban
+                       33414 Wellington  20%   gated, the car never drove in
+
+                    Coverage beats render quality as a selection criterion - a
+                    beautiful render is worth nothing on a house Google never
+                    photographed, and Wellington was first here until it was
+                    measured. */}
+                {['33019', '33186', '33156', '33414', '33480'].map(z => (
                   <button key={z} className="example" disabled={busy}
                           onClick={() => { setZip(z); startCampaign(null, z) }}>
                     <b>{z}</b>

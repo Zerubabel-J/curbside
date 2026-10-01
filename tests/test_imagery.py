@@ -70,3 +70,20 @@ def test_blank_tile_means_outside_coverage(tmp_path, monkeypatch):
     ok, msg = fetch(39.9, -86.1, tmp_path / "a.jpg")
     assert ok is False and "coverage" in msg
     assert not (tmp_path / "a.jpg").exists()
+
+
+def test_a_non_imagery_source_does_not_break_the_app(monkeypatch):
+    """`broward` is a valid sold-records county with no orthoimagery behind
+    it. Resolving the imagery service at import time meant selecting it
+    crashed the whole application with ValueError before a single request was
+    served - on a setting street-view mode never reads."""
+    import importlib
+    from curbside.config import settings
+
+    monkeypatch.setattr(settings, "source", "broward")
+    mod = importlib.import_module("curbside.sources.imagery")
+    importlib.reload(mod)          # must not raise
+
+    import pytest as _p
+    with _p.raises(ValueError, match="unknown source"):
+        mod.service()              # only when actually asked for

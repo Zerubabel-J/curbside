@@ -84,7 +84,16 @@ def locate(address, key=None):
             r["geometry"].get("location_type"), None)
 
 
-def coverage(address=None, latlng=None, key=None, radius=60):
+#: How far a panorama may sit from the property and still be a photograph of
+#: it. Measured on Wellington's gated streets, where Google's car never drove
+#: in: widening the search finds panoramas at 188m, 312m, 347m and 654m - all
+#: of them pictures of a different street. 90m covers a deep setback and a
+#: wide verge without reaching the next road, so a home beyond it is genuinely
+#: unphotographable rather than merely awkward.
+MAX_CAMERA_M = 90
+
+
+def coverage(address=None, latlng=None, key=None, radius=MAX_CAMERA_M):
     """Is there a panorama near this address? The metadata call is free and
     quota-exempt, so check before spending on an image."""
     key = key or _key()

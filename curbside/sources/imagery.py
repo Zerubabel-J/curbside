@@ -5,8 +5,20 @@ import math, pathlib, time, urllib.error, urllib.parse, urllib.request
 
 from curbside.config import settings
 
-SERVICE = settings.imagery().service
-ATTRIBUTION = settings.imagery().attribution
+# Resolved per call, not at import. These were module constants, which meant
+# importing anything that touched the pipeline raised ValueError when the
+# configured source was not an *imagery* source - and `broward` is a valid
+# sold-records county with no orthoimagery behind it. In street-view mode the
+# imagery source is irrelevant, so the whole app crashed on a setting it was
+# never going to read.
+
+
+def service():
+    return settings.imagery().service
+
+
+def attribution():
+    return settings.imagery().attribution
 
 def _mercator(lat, lon):
     x = lon * 20037508.34 / 180.0
