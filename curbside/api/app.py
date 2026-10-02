@@ -549,7 +549,14 @@ def _run_campaign(job_id, req: CampaignRequest):
                 continue
             lead_id, created = s.add_lead(addr)
             if created:
-                s.advance(lead_id, "discovered", lead_source="sold_list")
+                # Same record fields as /pull. A campaign and a month pull are
+                # two ways of asking the same county question, so a lead from
+                # either should carry what the record said - otherwise half
+                # the sheet shows blank columns depending on how it got there.
+                s.advance(lead_id, "discovered",
+                          lead_source=l.county,
+                          sale_date=l.sold_on.isoformat() if l.sold_on else None,
+                          sale_price=l.price, owner=l.owner or None)
             ids.append(lead_id)
         finish(f"{len(ids)} to process"
                + (f", {suppressed} suppressed" if suppressed else ""))
