@@ -33,6 +33,7 @@ class LeadOut:
     sale_date: Optional[str] = None
     sale_price: Optional[float] = None
     lead_source: Optional[str] = None
+    owner: Optional[str] = None
     has_before: bool = False
     has_after: bool = False
     has_postcard: bool = False
@@ -49,7 +50,7 @@ class LeadOut:
             qc=_load(row["qc"]),
             fail_stage=row["fail_stage"], fail_error=row["fail_error"],
             sale_date=row["sale_date"], sale_price=row["sale_price"],
-            lead_source=row["lead_source"],
+            lead_source=row["lead_source"], owner=row["owner"],
             has_before=bool(row["before_path"]),
             has_after=bool(row["after_path"]),
             has_postcard=bool(row["postcard_path"]),

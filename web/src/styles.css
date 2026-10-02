@@ -437,3 +437,10 @@ table.leads a { color: var(--accent); }
   .sheet-head { flex-direction: column; gap: .6rem; }
   .sheet-head .asLink { margin-left: 0; }
 }
+
+/* Owner names are long and often an LLC; truncate rather than let one row
+   push the price and status columns off screen. */
+table.leads .owner {
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}

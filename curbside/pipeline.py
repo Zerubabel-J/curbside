@@ -521,7 +521,14 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
     return {"rendered": rendered, "failed": failed}
 
 
-def compose(store, return_address, limit=None, log=print, only=None):
+def compose(store, return_address, limit=None, log=print, only=None,
+            template=None):
+    """Lay out a postcard per rendered lead.
+
+    `template` picks the copy. It only changes the words - layout, geometry
+    and the compliance footer are identical across templates, so comparing
+    two of them measures the message rather than the design.
+    """
     composed = failed = 0
     for lead in _scoped(store, "rendered", limit, only):
         card = settings.output_dir / f"{lead['id']:06d}_postcard.jpg"
@@ -532,7 +539,7 @@ def compose(store, return_address, limit=None, log=print, only=None):
             build_postcard(lead["before_path"], lead["after_path"],
                            lead["address"], card,
                            return_address=return_address, focus=focus,
-                           **templates.get(settings.template))
+                           **templates.get(template or settings.template))
         except Exception as e:
             store.fail(lead["id"], "compose", str(e))
             log(f"  [{lead['id']}] compose failed: {e}")

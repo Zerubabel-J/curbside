@@ -41,6 +41,10 @@ class SoldLead:
     sold_on: _dt.date
     property_use: str
     county: str
+    #: Who the county says owns it. Useful for addressing the piece to a
+    #: person rather than "Current Resident", and for spotting an LLC - an
+    #: investor is a different prospect from someone who moved in.
+    owner: str = ""
 
     def as_address(self):
         """One line, as the pipeline and the mail provider expect it."""
@@ -152,7 +156,7 @@ def _miami_dade(zip_code, min_price, since, limit, until=None):
              + f"AND {_SINGLE_FAMILY['miami_dade']}")
     rows = _paged(_MD_URL, where,
                   "TRUE_SITE_ADDR,TRUE_SITE_CITY,TRUE_SITE_ZIP_CODE,"
-                  "PRICE_1,DATEOFSALE_UTC,DOR_DESC",
+                  "PRICE_1,DATEOFSALE_UTC,DOR_DESC,TRUE_OWNER1",
                   "DATEOFSALE_UTC DESC", limit)
     out = []
     for a in rows:
@@ -163,6 +167,7 @@ def _miami_dade(zip_code, min_price, since, limit, until=None):
             price=_money(a.get("PRICE_1")),
             sold_on=_epoch_to_date(a.get("DATEOFSALE_UTC")),
             property_use=(a.get("DOR_DESC") or "").strip(),
+            owner=(a.get("TRUE_OWNER1") or "").strip(),
             county="miami_dade"))
     return out
 
@@ -241,7 +246,7 @@ def _palm_beach(zip_code, min_price, since, limit, until=None):
              f"AND {_SINGLE_FAMILY['palm_beach']}")
     rows = _paged(_PB_URL, where,
                   "SITE_ADDR_STR,MUNICIPALITY,PRICE,SALE_DATE,"
-                  "PROPERTY_USE,QUAL_CODE",
+                  "PROPERTY_USE,QUAL_CODE,OWNER_NAME1",
                   "SALE_DATE DESC", limit)
     out = []
     for a in rows:
@@ -256,6 +261,7 @@ def _palm_beach(zip_code, min_price, since, limit, until=None):
             price=_money(a.get("PRICE")),
             sold_on=_epoch_to_date(a.get("SALE_DATE")),
             property_use=(a.get("PROPERTY_USE") or "").strip(),
+            owner=(a.get("OWNER_NAME1") or "").strip(),
             county="palm_beach"))
     return out
 
@@ -294,7 +300,7 @@ def _broward(zip_code, min_price, since, limit, until=None):
                      f"AND {_SINGLE_FAMILY['broward']}",
                      "FOLIO_NUMBER,SITUS_STREET_NUMBER,SITUS_STREET_DIRECTION,"
                      "SITUS_STREET_NAME,SITUS_STREET_TYPE,SITUS_STREET_POST_DIR,"
-                     "SITUS_UNIT_NUMBER,SITUS_CITY,SITUS_ZIP_CODE",
+                     "SITUS_UNIT_NUMBER,SITUS_CITY,SITUS_ZIP_CODE,NAME_LINE_1",
                      # Every parcel in the ZIP, not `limit` of them: this set
                      # is the join key for the sales layer, so truncating it
                      # silently discards sales rather than returning fewer
@@ -337,6 +343,7 @@ def _broward(zip_code, min_price, since, limit, until=None):
             price=price,
             sold_on=_epoch_to_date(s.get("SALE_DATE")),
             property_use="SINGLE FAMILY",
+            owner=(parcel.get("NAME_LINE_1") or "").strip(),
             county="broward"))
         if len(out) >= limit:
             break
@@ -400,7 +407,7 @@ def _broward_countywide(min_price, since, limit, until=None):
                       f"FOLIO_NUMBER IN ({clause}) AND {_SINGLE_FAMILY['broward']}",
                       "FOLIO_NUMBER,SITUS_STREET_NUMBER,SITUS_STREET_DIRECTION,"
                       "SITUS_STREET_NAME,SITUS_STREET_TYPE,SITUS_STREET_POST_DIR,"
-                      "SITUS_UNIT_NUMBER,SITUS_CITY,SITUS_ZIP_CODE",
+                      "SITUS_UNIT_NUMBER,SITUS_CITY,SITUS_ZIP_CODE,NAME_LINE_1",
                       "FOLIO_NUMBER ASC", len(chunk))
         for r in rows:
             parcels[r["FOLIO_NUMBER"]] = r
@@ -417,6 +424,7 @@ def _broward_countywide(min_price, since, limit, until=None):
             price=_money(sale.get("SALE_AMOUNT")),
             sold_on=_epoch_to_date(sale.get("SALE_DATE")),
             property_use="SINGLE FAMILY",
+            owner=(parcel.get("NAME_LINE_1") or "").strip(),
             county="broward"))
         if len(out) >= limit:
             break

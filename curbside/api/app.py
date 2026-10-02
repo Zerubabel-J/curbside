@@ -601,7 +601,10 @@ class PullRequest(BaseModel):
     year: int
     month: int
     min_price: int = 700_000
-    limit_per_county: int = 800
+    #: A month across all three counties runs to a few thousand sales. The cap
+    #: exists so one pull cannot fill the sheet with more than a contractor
+    #: would work through, not because the sources struggle.
+    limit_per_county: int = 1500
 
 
 def _run_pull(job_id, req: PullRequest):
@@ -648,7 +651,7 @@ def _run_pull(job_id, req: PullRequest):
                 s.advance(lead_id, "discovered",
                           lead_source=l.county,
                           sale_date=l.sold_on.isoformat() if l.sold_on else None,
-                          sale_price=l.price)
+                          sale_price=l.price, owner=l.owner or None)
                 added += 1
             else:
                 skipped += 1
@@ -681,6 +684,7 @@ def start_pull(req: PullRequest, background: BackgroundTasks):
 class GenerateRequest(BaseModel):
     """Work the queue: take the next N leads and carry them to a postcard."""
     limit: int = 25
+    template: Optional[str] = None
 
 
 def _run_generate(job_id, req: GenerateRequest):
@@ -738,7 +742,8 @@ def _run_generate(job_id, req: GenerateRequest):
             finish(f"{r['rendered']} passed, {r['failed']} rejected by QC")
 
             running("Laying out postcards")
-            r = pipeline.compose(s, ra, log=lambda *_: None, only=ready)
+            r = pipeline.compose(s, ra, log=lambda *_: None, only=ready,
+                                 template=req.template)
             finish(f"{r['composed']} ready for review")
 
         job.update(status="completed", stage="done")
@@ -805,6 +810,18 @@ def lead_sheet(
         }
     finally:
         s.close()
+
+
+@app.get("/templates", tags=["leads"])
+def list_templates():
+    """The copy options. Layout and compliance are identical across all of
+    them, so a response difference measures the words, not the design."""
+    from curbside.compose import templates
+    return {
+        "default": templates.DEFAULT_TEMPLATE,
+        "templates": [{"key": k, "name": n, "note": note}
+                      for k, n, note in templates.choices()],
+    }
 
 
 @app.get("/markets", tags=["pipeline"])

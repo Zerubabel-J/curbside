@@ -28,6 +28,7 @@ export const api = {
   scan: (body) => req('/scan', { method: 'POST', body: JSON.stringify(body) }),
   campaign: (body) => req('/campaign', { method: 'POST', body: JSON.stringify(body) }),
   markets: () => req('/markets'),
+  templates: () => req('/templates'),
   sheet: (params = {}) => {
     const q = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== '' && v != null))

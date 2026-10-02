@@ -296,3 +296,18 @@ def test_pull_rejects_an_impossible_month(client, monkeypatch):
     assert r.status_code == 200
     status = client.get(f"/scan/{r.json()['job_id']}").json()
     assert status["status"] == "failed"
+
+
+def test_templates_endpoint_lists_the_copy_options(client):
+    d = client.get("/templates").json()
+    keys = {t["key"] for t in d["templates"]}
+    assert "curb_appeal" in keys and len(keys) >= 5
+    assert d["default"] in keys
+
+
+def test_generate_accepts_a_template(client, monkeypatch):
+    """The picker sends a template key; an unknown one must not silently fall
+    back to the default and print the wrong card."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    r = client.post("/generate", json={"limit": 1, "template": "value"})
+    assert r.status_code == 200

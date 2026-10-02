@@ -66,3 +66,29 @@ def test_retry_respects_max_attempts(store):
         store.retry_failed(max_attempts=3)
     store.fail(lead_id, "render", "boom")
     assert store.retry_failed(max_attempts=3) == 0
+
+
+def test_owner_column_is_added_to_an_existing_database(tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` leaves an existing file untouched, so a
+    column added after the first release has to be migrated in - otherwise
+    every install from before the change breaks on read."""
+    import sqlite3
+    from curbside.store import Store
+
+    path = tmp_path / "old.db"
+    # A database as it was before `owner` existed.
+    db = sqlite3.connect(path)
+    db.executescript("""
+        CREATE TABLE leads (
+            id INTEGER PRIMARY KEY, address TEXT NOT NULL,
+            address_key TEXT NOT NULL UNIQUE, state TEXT NOT NULL,
+            created_at REAL NOT NULL, updated_at REAL NOT NULL);
+    """)
+    db.commit(); db.close()
+
+    s = Store(path)
+    try:
+        cols = {r["name"] for r in s.db.execute("PRAGMA table_info(leads)")}
+        assert "owner" in cols
+    finally:
+        s.close()

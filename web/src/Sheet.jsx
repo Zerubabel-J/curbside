@@ -52,6 +52,8 @@ export default function Sheet({ onOpenScan }) {
   const [month, setMonth] = useState(now.getMonth())   // 0-based; last month
   const [minPrice, setMinPrice] = useState(700000)
   const [batch, setBatch] = useState(25)
+  const [templates, setTemplates] = useState([])
+  const [template, setTemplate] = useState('')
   const timer = useRef(null)
 
   const load = useCallback(async () => {
@@ -70,6 +72,12 @@ export default function Sheet({ onOpenScan }) {
   }, [state, search, offset])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    api.templates()
+       .then(d => { setTemplates(d.templates || []); setTemplate(d.default || '') })
+       .catch(() => { /* the picker is optional; the default still applies */ })
+  }, [])
 
   // While a pull or a generate runs, keep the table and counters live so the
   // numbers move as work completes rather than after it.
@@ -162,8 +170,17 @@ export default function Sheet({ onOpenScan }) {
                     onChange={e => setBatch(Number(e.target.value))}>
               {[5, 10, 25, 50].map(n => <option key={n} value={n}>{n} homes</option>)}
             </select>
+            {templates.length > 0 && (
+              <select value={template} disabled={busy} title="Postcard copy"
+                      onChange={e => setTemplate(e.target.value)}>
+                {templates.map(t => (
+                  <option key={t.key} value={t.key} title={t.note}>{t.name}</option>
+                ))}
+              </select>
+            )}
             <button className="primary" disabled={busy || !(counts.discovered)}
-                    onClick={() => start(api.generate, { limit: batch })}>
+                    onClick={() => start(api.generate,
+                      { limit: batch, template: template || null })}>
               Generate
             </button>
           </div>
@@ -209,7 +226,7 @@ export default function Sheet({ onOpenScan }) {
           <thead>
             <tr>
               <th>Sold</th><th>Address</th><th>County</th><th className="num">Price</th>
-              <th>Status</th><th>Driveway</th><th>Postcard</th>
+              <th>Owner</th><th>Status</th><th>Driveway</th><th>Postcard</th>
             </tr>
           </thead>
           <tbody>
@@ -223,6 +240,7 @@ export default function Sheet({ onOpenScan }) {
                   <td className="addr">{l.address}</td>
                   <td className="dim">{(l.lead_source || '—').replace(/_/g, '-')}</td>
                   <td className="num">{money(l.sale_price)}</td>
+                  <td className="dim owner">{l.owner || '—'}</td>
                   <td><StatusChip state={l.state} /></td>
                   <td className="dim">{q.best_shape || '—'}</td>
                   <td>
@@ -235,7 +253,7 @@ export default function Sheet({ onOpenScan }) {
               )
             })}
             {rows.length === 0 && (
-              <tr><td colSpan={7} className="empty">
+              <tr><td colSpan={8} className="empty">
                 No leads yet — pull a month of sales to begin.
               </td></tr>
             )}

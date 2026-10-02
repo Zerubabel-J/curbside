@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS leads (
     qualification   TEXT,
     sale_date       TEXT,
     sale_price      REAL,
+    owner           TEXT,
     lead_source     TEXT,
     qc              TEXT,
     fail_stage      TEXT,
@@ -77,7 +78,19 @@ class Store:
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        self._migrate()
         self.db.commit()
+
+    #: Columns added after the first release. `CREATE TABLE IF NOT EXISTS`
+    #: leaves an existing database untouched, so a new column has to be added
+    #: explicitly or every install from before the change breaks on read.
+    _ADDED_COLUMNS = (("owner", "TEXT"),)
+
+    def _migrate(self):
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(leads)")}
+        for name, decl in self._ADDED_COLUMNS:
+            if name not in have:
+                self.db.execute(f"ALTER TABLE leads ADD COLUMN {name} {decl}")
 
     # ---------- leads ----------
 
