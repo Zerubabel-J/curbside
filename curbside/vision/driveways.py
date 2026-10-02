@@ -252,10 +252,31 @@ def render_prompt(design_key, shape_key="resurface", framing=0):
                            geometry=f"\n\n{s['geometry']}", extra=extra)
 
 
+#: Which framing to try first, by kind of work. Measured on one house, same
+#: shape, same material, changing only the framing:
+#:
+#:     teardrop   inpaint 43%   photoshop 70%   swap  2%
+#:
+#: `inpaint` wins for resurfacing - naming a small locked region suits a small
+#: edit. It loses badly for reshaping, where the region is most of the ground
+#: and "inpaint this area" reads as licence to redesign it. `swap`, which
+#: fixes the camera and the scene and changes only the surface, holds far
+#: better when the work is large. Trying them in the wrong order wastes two
+#: renders and sometimes never reaches the one that works.
+_ORDER = {
+    "resurface": ("inpaint", "photoshop", "swap"),
+    "circular":  ("swap", "photoshop", "inpaint"),
+    "teardrop":  ("swap", "photoshop", "inpaint"),
+    "widened":   ("swap", "inpaint", "photoshop"),
+}
+
+
 def render_ladder(design_key, shape_key="resurface"):
     """Every framing, in the order to try them. Stop at the first that holds."""
-    return [(name, render_prompt(design_key, shape_key, i))
-            for i, (name, _) in enumerate(_FRAMINGS)]
+    by_name = {name: i for i, (name, _) in enumerate(_FRAMINGS)}
+    order = _ORDER.get(shape_key, tuple(by_name))
+    return [(name, render_prompt(design_key, shape_key, by_name[name]))
+            for name in order]
 
 
 def qualify_prompt():

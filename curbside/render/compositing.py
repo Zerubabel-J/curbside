@@ -26,29 +26,51 @@ def _arr(src):
     return np.asarray(im).astype(np.int16), im.size
 
 
-def facade_change(before_path, after_path, top=0.35, bottom=0.55,
-                  threshold=40):
-    """How much of the house itself changed.
+def facade_change(before_path, after_path, top=0.30, bottom=0.55,
+                  threshold=40, ground_tone=70):
+    """How much of the *house* changed, ignoring paving that grew upward.
 
-    Sky drift alone cannot catch the worst reshaping failure. The ground mask
+    Sky drift alone cannot catch the worst reshaping failure: the ground mask
     preserves everything above the horizon by construction, so the sky can be
     pixel-perfect while the model has pushed the house into the background and
-    rebuilt the lot in front of it - a beautiful driveway on somebody else's
-    home, which is exactly the postcard that must never be mailed.
+    rebuilt the lot in front of it.
 
-    The band between `top` and `bottom` holds the facade on a street-level
-    shot. Measured on real renders: recomposed scenes sit at 22-43% here while
-    faithful ones sit at 1-8%.
+    But a band of the frame is a poor proxy for "the house". A circular
+    driveway legitimately sweeps deep into the shot and reaches well up the
+    frame, and measuring a fixed band scores that as a redrawn facade - one
+    verified render paved the frontage beautifully, kept the house, the power
+    lines and the hedges intact, and still scored 89%.
+
+    So the comparison is restricted to pixels that were *not ground* in the
+    original. Lawn and paving are low-saturation and mid-to-dark; the house,
+    its roof and its windows are not. New paving laid over old lawn is then
+    excluded from the measure, and only a genuinely redrawn building counts.
     """
     a, size = _arr(before_path)
     b, _    = _arr(after_path)
     if a.shape != b.shape:
         b_img = Image.open(os.fspath(after_path)).convert("RGB").resize(size, Image.LANCZOS)
         b = np.asarray(b_img).astype(np.int16)
+
     h = a.shape[0]
-    d = np.abs(a - b).max(axis=2)
-    band = d[int(h * top):int(h * bottom)]
-    return float((band > threshold).mean())
+    lo, hi = int(h * top), int(h * bottom)
+    before_band = a[lo:hi]
+    d = np.abs(a - b).max(axis=2)[lo:hi]
+
+    # Ground in the original: green lawn, or grey paving. Both are things a
+    # new driveway may legitimately cover.
+    r, g, bl = before_band[..., 0], before_band[..., 1], before_band[..., 2]
+    mx = before_band.max(axis=2)
+    mn = before_band.min(axis=2)
+    grass = (g > r + 12) & (g > bl + 12)
+    paving = ((mx - mn) < 36) & (mx < 175)
+    structure = ~(grass | paving)
+
+    if structure.sum() < structure.size * 0.05:
+        # Almost nothing in the band is building - fall back to the whole band
+        # rather than dividing by a handful of pixels.
+        return float((d > threshold).mean())
+    return float((d[structure] > threshold).mean())
 
 
 def ground_mask(before_path, after_path, horizon=0.46, threshold=40,

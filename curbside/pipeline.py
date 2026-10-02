@@ -414,10 +414,30 @@ def render(store, key, budget, limit=None, log=print, use_segmentation=True,
                 base["material"] = design
                 base["shape"] = shape
                 ladder = driveways.render_ladder(design, shape)
+
+                # A circular loop is the hardest shape to render faithfully -
+                # measured across the bench it keeps the house about a third
+                # of the time, against near-always for a teardrop. When every
+                # framing has failed, falling back to a teardrop is still a
+                # reshaped driveway and still the offer being sold; producing
+                # nothing is the worse outcome for a lot that genuinely has
+                # room to build.
+                if shape == "circular":
+                    ladder = ladder + [
+                        (f"teardrop:{n}", pr)
+                        for n, pr in driveways.render_ladder(design, "teardrop")[:1]]
             else:
                 ladder = gemini.RENDER_LADDER
+            # `render_attempts` bounds retries of the *same* instruction. The
+            # street-level ladder is a sequence of different framings, each
+            # rescuing homes the others cannot, so truncating it to two throws
+            # away the attempt that would have worked - measured on one house,
+            # the third framing scored 2% where the first two scored 43% and
+            # 70%. Aerial keeps the old bound.
+            attempts = (len(ladder) if settings.street_view
+                        else settings.render_attempts)
             last = None
-            for tag, prompt in ladder[:settings.render_attempts]:
+            for tag, prompt in ladder[:attempts]:
                 out, passed = attempt(lead, prior, seg_meta, prompt, tag,
                                       shape=base.get("shape", "resurface"))
                 base["costs"].extend(out.pop("costs", []))
