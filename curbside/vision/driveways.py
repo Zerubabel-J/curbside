@@ -218,6 +218,15 @@ locked layer and is returned bit-for-bit identical: the house, its roof and
 windows, the sky, the trees, the neighbouring houses, parked cars, the road
 and the kerb."""),
 
+    ("add", """Add a new driveway to the ground in this photograph.{geometry}
+
+It is paved in {surface}, edged by {border}, {craft}.{extra}
+
+This is an addition to an existing photograph, not a new picture. Every pixel
+that is not ground stays exactly as it is - the house at the same size and
+position, its roof, walls, windows and doors, the trees, the sky, the
+neighbouring buildings, the kerb line and the camera angle."""),
+
     ("swap", """This photograph shows a house. Perform a material swap on
 {region} only: {surface}, edged by {border}, {craft}.{geometry}{extra}
 
@@ -264,10 +273,20 @@ def render_prompt(design_key, shape_key="resurface", framing=0):
 #: better when the work is large. Trying them in the wrong order wastes two
 #: renders and sometimes never reaches the one that works.
 _ORDER = {
-    "resurface": ("inpaint", "photoshop", "swap"),
-    "circular":  ("swap", "photoshop", "inpaint"),
-    "teardrop":  ("swap", "photoshop", "inpaint"),
-    "widened":   ("swap", "inpaint", "photoshop"),
+    # Resurfacing is a small edit inside a small region, and naming that
+    # region as locked is what holds.
+    "resurface": ("inpaint", "photoshop", "swap", "add"),
+
+    # Reshaping is the opposite. "Inpaint this region" over most of the
+    # ground reads as licence to redesign the lot, and the model rebuilds the
+    # scene - 94% of the house redrawn on homes where `add` scores 1%.
+    # Framing it as *adding a loop to the lawn* keeps it editing; framing it
+    # as *this area becomes a driveway* makes it redesign. Measured on six
+    # homes, `add` alone kept the house on three where the previous order
+    # kept it on one.
+    "circular":  ("add", "swap", "photoshop", "inpaint"),
+    "teardrop":  ("add", "swap", "photoshop", "inpaint"),
+    "widened":   ("add", "swap", "inpaint", "photoshop"),
 }
 
 
