@@ -23,6 +23,17 @@ const PAGE = 10
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
                 'August', 'September', 'October', 'November', 'December']
 
+// `lead_source` holds the county for anything pulled from the records. Older
+// leads carry the route they arrived by - `sold_list`, `block_scan` - which is
+// not a county and should not be printed as one.
+const COUNTIES = {
+  miami_dade: 'Miami-Dade', palm_beach: 'Palm Beach', broward: 'Broward',
+}
+
+function county(source) {
+  return COUNTIES[source] || '—'
+}
+
 function money(n) {
   if (n == null) return '—'
   return '$' + Math.round(n).toLocaleString()
@@ -238,7 +249,7 @@ export default function Sheet({ onOpenScan }) {
                 <tr key={l.id} className={ok ? 'has-card' : ''}>
                   <td className="dim">{l.sale_date || '—'}</td>
                   <td className="addr">{l.address}</td>
-                  <td className="dim">{(l.lead_source || '—').replace(/_/g, '-')}</td>
+                  <td className="dim">{county(l.lead_source)}</td>
                   <td className="num">{money(l.sale_price)}</td>
                   <td className="dim owner">{l.owner || '—'}</td>
                   <td><StatusChip state={l.state} /></td>
