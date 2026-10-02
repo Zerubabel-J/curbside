@@ -306,8 +306,24 @@ def test_templates_endpoint_lists_the_copy_options(client):
 
 
 def test_generate_accepts_a_template(client, monkeypatch):
-    """The picker sends a template key; an unknown one must not silently fall
-    back to the default and print the wrong card."""
+    """The picker sends a template key, and it has to reach `compose` - a
+    silently ignored choice prints the default copy while the UI claims
+    otherwise. Stubbed rather than run: a real generate spawns the whole
+    pipeline and took two and a half minutes of the suite."""
+    from curbside import pipeline
+
+    seen = {}
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(pipeline, "image", lambda *a, **k: {"imaged": 0, "failed": 0})
+    monkeypatch.setattr(pipeline, "qualify",
+                        lambda *a, **k: {"passed": 0, "rejected": 0, "failed": 0})
+    monkeypatch.setattr(pipeline, "render", lambda *a, **k: {"rendered": 0, "failed": 0})
+
+    def fake_compose(store, ra, **kw):
+        seen["template"] = kw.get("template")
+        return {"composed": 0, "failed": 0}
+    monkeypatch.setattr(pipeline, "compose", fake_compose)
+
     r = client.post("/generate", json={"limit": 1, "template": "value"})
     assert r.status_code == 200
+    client.get(f"/scan/{r.json()['job_id']}")
