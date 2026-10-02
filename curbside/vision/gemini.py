@@ -125,7 +125,7 @@ Everything else in the photograph must be returned exactly as it arrived."""
 ]
 
 
-def _post(payload, key, timeout=180, attempts=3):
+def _post(payload, key, timeout=180, attempts=4):
     """POST with a short retry.
 
     Transient read timeouts and 5xx responses are common enough that failing a
@@ -149,7 +149,12 @@ def _post(payload, key, timeout=180, attempts=3):
         except Exception as e:
             last = str(e)
         if attempt < attempts - 1:
-            time.sleep(1.5 * (attempt + 1))
+            # Exponential rather than linear. A DNS outage or a dropped
+            # connection lasts seconds, not milliseconds, and three retries
+            # 1.5s apart all land inside the same blip - measured: a batch of
+            # four leads lost three of them to one `Name or service not known`
+            # that had cleared by the time anyone looked.
+            time.sleep(min(2.0 * (2 ** attempt), 15.0))
     return None, last
 
 
